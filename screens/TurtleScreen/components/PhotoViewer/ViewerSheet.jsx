@@ -75,6 +75,12 @@ export default function ViewerSheet({
     <Animated.View
       style={[
         styles.card,
+        // Inside the KeyboardAvoidingView the card must be in NORMAL flow:
+        // `padding` behaviour pads the container, and an absolutely
+        // positioned child ignores its parent's padding — the card would sit
+        // pinned to the bottom edge with the composer under the keyboard.
+        // The wrapper's flex-end alignment keeps it at the bottom instead.
+        keyboard ? styles.cardFlow : styles.cardPinned,
         { height: cardHeight, backgroundColor: colors.surfaceElevated || colors.surface || '#1c1c1e' },
         { transform: [{ translateY: enter }] },
       ]}
@@ -133,13 +139,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
   card: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
+  },
+  cardPinned: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    overflow: 'hidden',
+  },
+  cardFlow: {
+    width: '100%',
   },
   cardInner: {
     flex: 1,

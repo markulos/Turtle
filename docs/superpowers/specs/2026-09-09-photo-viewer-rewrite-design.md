@@ -161,9 +161,10 @@ Rules per mode:
   resets the moment the page change settles (it is off-screen by then).
 - **pinch** — focal-anchored scale with two-finger drag, `rubberScale` past the limits (0.9
   resistance below 1× so the photo tracks the fingers toward the grid). A pinch that starts unzoomed
-  and releases below `PINCH_DISMISS_SCALE` (0.72, raw) closes the viewer. The number of pointers can
-  change mid-gesture; the pan re-baselines on that change (`zoomMath.absorbTouchJump` semantics,
-  implemented locally) so lifting one finger does not throw the photo.
+  and releases below `PINCH_DISMISS_SCALE` (0.72, raw) closes the viewer. The pan is single-finger
+  (`maxPointers(1)`) and the pinch owns both fingers, so lifting one finger simply ends the pinch
+  (it settles) — the remaining finger does not start a pan for that touch sequence, and the photo
+  never jumps toward the finger that stayed down.
 - **doubleTap** — zoom to `fillScale` at the tapped point (or `DOUBLE_TAP_SCALE` when the aspect is
   unknown), clamped by `nativeMaxScale` from the source pixels; when zoomed, back to 1× centred.
 - **singleTap** — `maxDistance(12)`, `maxDuration(260)`; toggles the chrome. Ignored when
