@@ -16,6 +16,7 @@ import { useServer } from '../../../context/ServerContext';
 import { normalizeTags, getPriorityColor, areAllSubtasksCompleted, itemTypeOf, itemColorOf, isTaskDoneNow, lastCompletedDate } from '../utils/taskHelpers';
 import { REMINDER_OPTIONS } from '../utils/constants';
 import { tapHaptic, impactHaptic, notifyHaptic } from '../../../utils/haptics';
+import { sendOrQueue } from '../../../services/offlineQueue';
 
 // iPhone-style edge-swipe-to-back. Touch must start within the first
 // ~24px of the screen's left edge and drag rightward fast enough or
@@ -105,9 +106,12 @@ export const TaskDetail = ({
     if (!content || postingComment) return;
     setPostingComment(true);
     try {
-      const res = await api.post(`/tasks/${task.id}/comments`, { content });
+      // Through the outbox: offline, the comment shows at once (pending) and
+      // lands on reconnect.
+      const r = await sendOrQueue(api, { method: 'post', path: `/tasks/${task.id}/comments`, body: { content }, label: 'comment' });
       setCommentDraft('');
-      if (res?.comment) setComments((prev) => [...prev, res.comment]);
+      if (r.queued) setComments((prev) => [...prev, { id: `local_${Date.now()}`, content, pending: true, created_at: new Date().toISOString() }]);
+      else if (r.result?.comment) setComments((prev) => [...prev, r.result.comment]);
       else await loadComments();
     } catch { /* keep draft */ } finally { setPostingComment(false); }
   }, [api, task?.id, commentDraft, postingComment, loadComments]);

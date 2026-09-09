@@ -9,6 +9,7 @@ import {
   updateSubtask,
   areAllSubtasksCompleted
 } from '../utils/taskHelpers';
+import { sendOrQueue } from '../../../services/offlineQueue';
 
 // ── Local-first cache (stale-while-revalidate) ──────────────────────────────
 // Tasks are mirrored to AsyncStorage so a fresh launch paints the calendar from
@@ -206,7 +207,11 @@ export const useTaskData = (api, isConnected, onTaskCompleted) => {
     }
     setTasks(newTasks);                 // 1. instant UI update
     try {
-      await api.post('/tasks', newTasks); // 2. confirm with backend
+      // 2. Confirm with the backend — through the OUTBOX. Unreachable pond →
+      // the whole-list write is parked (key 'tasks:all', so three offline
+      // edits send ONE post, the last one) and replayed on reconnect; the
+      // optimistic list stands. Only a permanent 4xx reverts.
+      await sendOrQueue(api, { method: 'post', path: '/tasks', body: newTasks, key: 'tasks:all', label: 'tasks' });
       // Success: the server now holds these; leave the guard in place — the
       // next load sees matching sigs and drops it. (Don't clear here: an
       // in-flight GET issued BEFORE this resolved could still land stale.)
@@ -355,9 +360,10 @@ export const useTaskData = (api, isConnected, onTaskCompleted) => {
 
     try {
       // 2. Persist in the background — tasks first (so the deletes land), then
-      //    remove the project itself.
-      if (onDeleteTasks) await api.post('/tasks', newTasks);
-      await api.delete(`/projects/${encodeURIComponent(name)}`);
+      //    remove the project itself. Both through the outbox: offline, they
+      //    replay in this order on reconnect.
+      if (onDeleteTasks) await sendOrQueue(api, { method: 'post', path: '/tasks', body: newTasks, key: 'tasks:all', label: 'tasks' });
+      await sendOrQueue(api, { method: 'delete', path: `/projects/${encodeURIComponent(name)}`, key: `project-delete:${name}`, label: 'board delete' });
       return true;
     } catch (error) {
       console.error('Delete project error:', error);

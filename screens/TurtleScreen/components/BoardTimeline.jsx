@@ -13,6 +13,7 @@ import EdgeSwipePage from './EdgeSwipePage';
 import ChatComposer, { ComposerAction } from '../../../components/ChatComposer';
 import MediaLightbox from '../../../components/MediaLightbox';
 import { TaskForm } from '../../TasksScreen/components/TaskForm';
+import { sendOrQueue } from '../../../services/offlineQueue';
 
 // One board's CONVERSATION (conversation-boards Phase 3): the merged feed of
 // everything on the board — tasks, events, notes, media (rendered as compact
@@ -205,9 +206,10 @@ export default function BoardTimeline({ visible, board, onClose }) {
   // then, which would no-op the refresh and invite duplicate taps).
   const createTaskFromBoard = useCallback(async (finalTask) => {
     try {
-      await api.post('/tasks/single', finalTask);
+      // Through the outbox: offline, the task is parked and lands on reconnect.
+      const r = await sendOrQueue(api, { method: 'post', path: '/tasks/single', body: finalTask, label: 'board task' });
       dirtyRef.current = true; // the inbox overview should re-count on close
-      load(null);              // pull the new task into the merged feed
+      if (!r.queued) load(null); // pull the new task into the merged feed
     } catch (e) {
       // Non-fatal: the composer already closed optimistically. Surface nothing
       // louder than a console note — the user can retry from the Tasks tab.

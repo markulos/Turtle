@@ -85,6 +85,7 @@ import { tapHaptic, impactHaptic } from '../../utils/haptics';
 import { fuzzyRank } from '../../utils/trigram';
 // Tab predicates + the feedback tag vocabulary (pure, unit-tested separately).
 import { APP_TAGS, PLATFORM_TAGS, isFeedbackNote, matchesFilter } from './feedbackFilter';
+import { sendOrQueue } from '../../services/offlineQueue';
 
 const FILTER_ALL = 'all';
 const FILTER_NOTE = 'note';
@@ -426,28 +427,42 @@ export default function NotesScreen() {
   useEffect(() => { void refresh(); void refreshCounts(); }, [refresh, refreshCounts]);
 
   // ── Mutations ───────────────────────────────────────────
+  // OFFLINE-FIRST (services/offlineQueue): every write updates the list NOW
+  // and goes through sendOrQueue. Reached the pond → refresh to the server's
+  // truth. Pond unreachable → the write is parked in the outbox (replayed on
+  // reconnect / foreground by ServerContext's auto-flush) and the optimistic
+  // row simply stays; nothing is reverted, no toast. Only a permanent 4xx
+  // ("this will never work") reverts and alerts.
   const createNote = async ({ content, description, type, tags }) => {
     if (!content.trim()) return false;
+    const body = {
+      // Send BOTH field names: the server's POST handler historically reads
+      // `note` (the web chat /note path), so sending only `content` made it
+      // reject with "content required". `content` is kept for forward-compat
+      // with the updated server that accepts either.
+      note: content.trim(),
+      content: content.trim(),
+      description: description?.trim() || '',
+      type: type || 'note',
+      tags: tags || [],
+      done: false,
+    };
+    // A local row so the note exists on screen before (or without) the pond.
+    const localId = `local_${Date.now()}`;
+    const nowIso = new Date().toISOString();
+    setNotes((cur) => [{ id: localId, ...body, pending: true, created_at: nowIso, updated_at: nowIso }, ...cur]);
     try {
-      const res = await api.post('/turtle/note', {
-        // Send BOTH field names: the server's POST handler historically reads
-        // `note` (the web chat /note path), so sending only `content` made it
-        // reject with "content required". `content` is kept for forward-compat
-        // with the updated server that accepts either.
-        note: content.trim(),
-        content: content.trim(),
-        description: description?.trim() || '',
-        type: type || 'note',
-        tags: tags || [],
-        done: false,
-      });
-      if (res?.success !== false) {
+      const r = await sendOrQueue(api, { method: 'post', path: '/turtle/note', body, label: 'note' });
+      if (r.queued) return true; // parked; the local row stands until the flush + next refresh
+      if (r.result?.success !== false) {
         await refresh();
         void refreshCounts();
         return true;
       }
+      setNotes((cur) => cur.filter((n) => n.id !== localId));
       return false;
     } catch (e) {
+      setNotes((cur) => cur.filter((n) => n.id !== localId));
       Alert.alert('Could not create note', e.message || String(e));
       return false;
     }
@@ -457,20 +472,30 @@ export default function NotesScreen() {
   // (consistent with what we send here), so no dual-field dance is needed.
   const editNote = async (id, { content, description, type, tags }) => {
     if (!content.trim()) return false;
+    const body = {
+      content: content.trim(),
+      description: description?.trim() || '',
+      type: type || 'note',
+      tags: tags || [],
+    };
+    let before = null;
+    setNotes((cur) => cur.map((n) => {
+      if (n.id !== id) return n;
+      before = n;
+      return { ...n, ...body, updated_at: new Date().toISOString() };
+    }));
     try {
-      const res = await api.patch(`/turtle/notes/${id}`, {
-        content: content.trim(),
-        description: description?.trim() || '',
-        type: type || 'note',
-        tags: tags || [],
-      });
-      if (res?.success !== false) {
+      const r = await sendOrQueue(api, { method: 'patch', path: `/turtle/notes/${id}`, body, key: `note:${id}`, label: 'note edit' });
+      if (r.queued) return true;
+      if (r.result?.success !== false) {
         await refresh();
         void refreshCounts();
         return true;
       }
+      if (before) setNotes((cur) => cur.map((n) => (n.id === id ? before : n)));
       return false;
     } catch (e) {
+      if (before) setNotes((cur) => cur.map((n) => (n.id === id ? before : n)));
       Alert.alert('Could not update note', e.message || String(e));
       return false;
     }
@@ -478,12 +503,13 @@ export default function NotesScreen() {
 
   const toggleDone = async (note) => {
     // Optimistic flip: update local state before the network call so the
-    // checkbox feels responsive. On error, roll back THIS note functionally
-    // (no stale `notes` closure — so a memoized NoteRow holding an old handler
-    // still rolls back correctly, and we don't clobber other concurrent edits).
+    // checkbox feels responsive. On a PERMANENT error, roll back THIS note
+    // functionally (no stale `notes` closure — so a memoized NoteRow holding
+    // an old handler still rolls back correctly). Offline → the flip stays and
+    // the outbox replays it; repeated flips collapse to the last one.
     setNotes((cur) => cur.map((n) => (n.id === note.id ? { ...n, done: !n.done } : n)));
     try {
-      await api.patch(`/turtle/notes/${note.id}`, { done: !note.done });
+      await sendOrQueue(api, { method: 'patch', path: `/turtle/notes/${note.id}`, body: { done: !note.done }, key: `note-done:${note.id}`, label: 'note done' });
     } catch (e) {
       setNotes((cur) => cur.map((n) => (n.id === note.id ? { ...n, done: note.done } : n)));
       Alert.alert('Could not update', e.message || String(e));
@@ -492,12 +518,13 @@ export default function NotesScreen() {
 
   // Raw delete (no confirm) — the action sheet below is the deliberate step.
   const performDelete = async (note) => {
+    setNotes((cur) => cur.filter((n) => n.id !== note.id));
     try {
-      await api.delete(`/turtle/notes/${note.id}`);
-      setNotes((cur) => cur.filter((n) => n.id !== note.id));
+      const r = await sendOrQueue(api, { method: 'delete', path: `/turtle/notes/${note.id}`, key: `note-delete:${note.id}`, label: 'note delete' });
       // Totals changed — the tabs read the server count, not the loaded rows.
-      void refreshCounts();
+      if (!r.queued) void refreshCounts();
     } catch (e) {
+      setNotes((cur) => (cur.some((n) => n.id === note.id) ? cur : [note, ...cur]));
       Alert.alert('Delete failed', e.message || String(e));
     }
   };
