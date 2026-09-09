@@ -49,7 +49,7 @@ repo skill (loaded before any UI work) and by review.
 - A sheet over an open Modal is an in-tree overlay, never a sibling `Modal` (iOS drops it silently).
   Sheets render LAST in their tree and carry `zIndex` so they draw over chrome and cards.
 - Every card that pops up from below has TWO DETENTS through `utils/useSheetDetents`: it opens at
-  COLLAPSED (60 % of the screen), a drag up takes it to EXPANDED (92 %), a drag down past collapsed
+  COLLAPSED (60 % of the screen), a drag up takes it to EXPANDED (the full screen: corners square off, content clears the status bar), a drag down past collapsed
   closes it; a flick decides faster than distance. Grab region = the whole card; the scrim fades with a
   closing pull; an inner list scrolls only once the sheet is expanded and hands back a downward drag at its
   top. (`utils/useSheetDismiss` is the legacy single-detent hook — migrate, do not add new users.)
@@ -90,6 +90,6 @@ repo skill (loaded before any UI work) and by review.
 1. Which surface is it — white-on-black or black-on-white — and does every element on it contrast?
 2. Longest label, longest value, 375 pt width: nothing clipped, nothing past the edge.
 3. Every tappable ≥ 44 pt with a label; pressed state; haptic on action buttons.
-4. Sheets: in-tree, two detents (opens at 60 %, drag up to 92 %, drag down closes), top search, keyboard lift, scroll-indicator inset.
+4. Sheets: in-tree, two detents (opens at 60 %, drag up to full screen, drag down closes), top search, keyboard lift, scroll-indicator inset.
 5. Motion on the UI thread only; swift curve for shared-element moves.
 6. Ran `turtle-mobile-verify` (parse, jest, undef-audit, bundle) and listed the on-device checks.

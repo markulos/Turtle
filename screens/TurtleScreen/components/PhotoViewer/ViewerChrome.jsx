@@ -123,10 +123,24 @@ function VideoScrubber({ currentTime, duration, playing, onSeek, onScrubStart, o
     }
   }, [currentTime, duration, playing, progress, scrubbing]);
 
-  const ratioAt = useCallback((locationX) => {
+  // Positions are taken from pageX against the track's window x, measured at
+  // touch-down. `locationX` is relative to whichever view the finger is OVER
+  // — crossing the thumb or the fill moved the origin to that child and the
+  // ratio jumped around ("tripping out"). pageX never changes frame.
+  const trackRef = useRef(null);
+  const trackXRef = useRef(0);
+  const ratioAt = useCallback((pageX) => {
     const w = trackWRef.current;
-    return w > 0 ? clamp01(locationX / w) : 0;
+    return w > 0 ? clamp01((pageX - trackXRef.current) / w) : 0;
   }, []);
+  const measureTrack = useCallback((then) => {
+    const node = trackRef.current;
+    if (node && typeof node.measureInWindow === 'function') {
+      node.measureInWindow((x, _y, w) => { trackXRef.current = x; if (w > 0) { trackWRef.current = w; trackW.value = w; } then(); });
+    } else {
+      then();
+    }
+  }, [trackW]);
 
   const seekNow = useCallback((ratio) => {
     if (duration > 0) onSeek?.(ratio * duration);
@@ -182,23 +196,25 @@ function VideoScrubber({ currentTime, duration, playing, onSeek, onScrubStart, o
     <View style={styles.scrubber} pointerEvents="box-none" testID="viewer-scrubber">
       <Text style={styles.clock}>{formatClock(scrubLabel == null ? currentTime : scrubLabel)}</Text>
       <View
+        ref={trackRef}
         style={styles.trackHit}
         onLayout={(e) => { const w = e.nativeEvent.layout.width; trackWRef.current = w; trackW.value = w; }}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onResponderTerminationRequest={() => false}
-        onResponderGrant={(e) => grab(e.nativeEvent.locationX)}
-        onResponderMove={(e) => move(e.nativeEvent.locationX)}
-        onResponderRelease={(e) => release(e.nativeEvent.locationX)}
+        onResponderGrant={(e) => { const px = e.nativeEvent.pageX; measureTrack(() => grab(px)); }}
+        onResponderMove={(e) => move(e.nativeEvent.pageX)}
+        onResponderRelease={(e) => release(e.nativeEvent.pageX)}
         onResponderTerminate={() => release(null)}
         accessibilityRole="adjustable"
         accessibilityLabel="Video position"
         testID="viewer-scrubber-track"
       >
-        <View style={styles.track}>
+        {/* Children are never touch targets: the track view owns every event. */}
+        <View style={styles.track} pointerEvents="none">
           <Animated.View style={[styles.trackFill, fillStyle]} />
         </View>
-        <Animated.View style={[styles.thumb, thumbStyle]} />
+        <Animated.View style={[styles.thumb, thumbStyle]} pointerEvents="none" />
       </View>
       <Text style={styles.clock}>{formatClock(duration)}</Text>
     </View>
