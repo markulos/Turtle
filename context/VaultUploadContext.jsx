@@ -173,18 +173,24 @@ export function VaultUploadProvider({ children }) {
     }
     const c = countsOf(batch);
     const pct = pctOf(batch, currentPctRef.current);
+    const inflight = batch.items.filter((it) => it.status === 'inflight').length;
     const now = Date.now();
-    const { pct: lastPct, at } = lastNotifRef.current;
-    // Post on a % change (rate-limited to min 800ms apart) or a 5s heartbeat
-    // when unchanged; skip otherwise.
-    if (pct === lastPct && now - at < 5000) return;
-    if (pct !== lastPct && now - at < 800) return;
-    lastNotifRef.current = { pct, at: now };
+    const { pct: lastPct, done: lastDone, at } = lastNotifRef.current;
+    // Post when the % OR the landed count changes (rate-limited to min 800ms
+    // apart), or as a 5s heartbeat when unchanged; skip otherwise. The count
+    // is what the user reads — "how many are up" — so a finished item always
+    // reaches the notification even when the % rounds to the same number.
+    const changed = pct !== lastPct || c.terminal !== lastDone;
+    if (!changed && now - at < 5000) return;
+    if (changed && now - at < 800) return;
+    lastNotifRef.current = { pct, done: c.terminal, at: now };
     updateUploadProgress({
       pct,
-      current: Math.min(c.terminal + 1, batch.items.length),
       total: batch.items.length,
+      uploaded: c.uploaded,
+      inflight,
       duplicates: c.duplicate,
+      failed: c.failed + c.missing,
     });
   }, []);
 
