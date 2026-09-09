@@ -31,6 +31,8 @@ export function useStageValues(width, height) {
   const dragY = useSharedValue(0);
   /** 0 → 1 on open; back to 0 on close. Drives the pop, the backdrop, the chrome. */
   const openProgress = useSharedValue(0);
+  /** 1 while the close flight runs — the page switches off only then, on arrival. */
+  const closing = useSharedValue(0);
   /** 1 while a page settle animation runs. */
   const settling = useSharedValue(0);
   /** items.length, mirrored so worklets can clamp. */
@@ -52,7 +54,7 @@ export function useStageValues(width, height) {
   // Shared values are stable refs, so the bundle only changes with the
   // geometry — and the geometry is fixed for the viewer's life.
   return useMemo(() => ({
-    pagerX, activeIndex, zoomIndex, scale, tx, ty, dragX, dragY, openProgress, settling, count,
+    pagerX, activeIndex, zoomIndex, scale, tx, ty, dragX, dragY, openProgress, closing, settling, count,
     aspect, chrome, originX, originY, originScale, zoomEnabled, maxScale,
     pageW: width + GUTTER,
     width,

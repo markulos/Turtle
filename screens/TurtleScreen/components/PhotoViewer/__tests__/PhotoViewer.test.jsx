@@ -53,6 +53,9 @@ jest.mock('expo-blur', () => {
   const { View } = require('react-native');
   return { BlurView: View };
 });
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }),
+}));
 jest.mock('react-native-vector-icons/MaterialCommunityIcons', () => 'Icon');
 jest.mock('../../../../../context/MusicPlayerContext', () => ({
   useMusicPlayer: () => ({ pause: jest.fn() }),

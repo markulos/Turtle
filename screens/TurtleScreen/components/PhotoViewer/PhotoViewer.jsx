@@ -183,6 +183,7 @@ export default function PhotoViewer({
     sv.originX.value = from.x;
     sv.originY.value = from.y;
     sv.originScale.value = from.scale;
+    sv.closing.value = 0;
     sv.openProgress.value = 0;
     sv.openProgress.value = withTiming(1, OPEN_TIMING);
 
@@ -226,6 +227,7 @@ export default function PhotoViewer({
     // recycled off-screen, or nothing to measure) the photo shrinks in place
     // while the backdrop clears.
     const run = (rect) => {
+      sv.closing.value = 1;
       const to = originFor(rect, item);
       sv.originX.value = to.x;
       sv.originY.value = to.y;

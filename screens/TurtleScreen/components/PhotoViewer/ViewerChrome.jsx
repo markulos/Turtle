@@ -16,9 +16,9 @@
  * values per element and toggled pointerEvents from three different pieces of
  * state; that complexity sat on the exact path a swipe had to cross.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { useAnimatedStyle } from 'react-native-reanimated';
+import Animated, { Easing, cancelAnimation, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -61,27 +61,58 @@ export function formatClock(seconds) {
  */
 /** Seeks while the finger moves are rate-limited to this. */
 const SEEK_THROTTLE_MS = 90;
+/** The player reports time this often; the bar glides between reports. */
+const TIME_REPORT_MS = 250;
+/** After a seek, reports older than the seek target are ignored this long. */
+const SEEK_SETTLE_MS = 900;
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
+/**
+ * The video timeline, the way a native player does it:
+ *   • progress is a SHARED VALUE. Between the player's reports (4 Hz) the bar
+ *     glides linearly on the UI thread, so it moves smoothly instead of in
+ *     quarter-second steps; the fill scales and the thumb translates — no
+ *     React render per frame.
+ *   • while the finger is down the thumb is the finger (the shared value is
+ *     written straight from the touch), the player is paused, and seeks go
+ *     out rate-limited with the latest position.
+ *   • after a seek the player may still report the OLD time once or twice;
+ *     those stale reports are ignored until it confirms the new position, so
+ *     the thumb stays where you left it and simply resumes from there.
+ * The track owns its touches through the RN responder system (it sits in the
+ * chrome band, above the stage, so the stage's gesture tree never sees them).
+ */
 function VideoScrubber({ currentTime, duration, onSeek, onScrubStart, onScrubEnd }) {
-  const [trackW, setTrackW] = useState(0);
-  const [scrubRatio, setScrubRatio] = useState(null);
+  const progress = useSharedValue(0);
+  const trackW = useSharedValue(0);
+  const scrubbing = useSharedValue(0);
   const trackWRef = useRef(0);
-  trackWRef.current = trackW;
   const throttleRef = useRef({ timer: null, pending: null, last: 0 });
+  const seekSettleRef = useRef(null); // { target, until }
+  const [scrubLabel, setScrubLabel] = useState(null); // seconds, while the finger is down
+
+  // Follow the player's reports — unless the finger owns the bar, or the
+  // report is a stale pre-seek time.
+  useEffect(() => {
+    if (scrubbing.value) return;
+    const pending = seekSettleRef.current;
+    if (pending) {
+      if (Date.now() < pending.until && Math.abs(currentTime - pending.target) > 0.75) return;
+      seekSettleRef.current = null;
+    }
+    const ratio = duration > 0 ? clamp01(currentTime / duration) : 0;
+    progress.value = withTiming(ratio, { duration: TIME_REPORT_MS, easing: Easing.linear });
+  }, [currentTime, duration, progress, scrubbing]);
 
   const ratioAt = useCallback((locationX) => {
     const w = trackWRef.current;
-    if (!(w > 0)) return 0;
-    return Math.min(1, Math.max(0, locationX / w));
+    return w > 0 ? clamp01(locationX / w) : 0;
   }, []);
 
   const seekNow = useCallback((ratio) => {
     if (duration > 0) onSeek?.(ratio * duration);
   }, [duration, onSeek]);
 
-  // The thumb tracks the finger every frame; the PLAYER hears about it a few
-  // times a second, and always the latest position. Flooding it with seeks
-  // was the jitter.
   const seekThrottled = useCallback((ratio) => {
     const t = throttleRef.current;
     t.pending = ratio;
@@ -90,43 +121,65 @@ function VideoScrubber({ currentTime, duration, onSeek, onScrubStart, onScrubEnd
     t.timer = setTimeout(() => {
       t.timer = null;
       t.last = Date.now();
-      if (t.pending != null) { seekNow(t.pending); t.pending = null; }
+      if (t.pending != null) { seekNow(t.pending); setScrubLabel(t.pending * duration); t.pending = null; }
     }, wait);
-  }, [seekNow]);
+  }, [seekNow, duration]);
 
-  const finish = useCallback((ratio) => {
+  const grab = useCallback((locationX) => {
+    onScrubStart?.();
+    scrubbing.value = 1;
+    cancelAnimation(progress);
+    const r = ratioAt(locationX);
+    progress.value = r;
+    setScrubLabel(r * duration);
+    seekThrottled(r);
+  }, [onScrubStart, scrubbing, progress, ratioAt, duration, seekThrottled]);
+
+  const move = useCallback((locationX) => {
+    const r = ratioAt(locationX);
+    progress.value = r;
+    seekThrottled(r);
+  }, [ratioAt, progress, seekThrottled]);
+
+  const release = useCallback((locationX) => {
     const t = throttleRef.current;
     if (t.timer) { clearTimeout(t.timer); t.timer = null; }
     t.pending = null;
-    if (ratio != null) seekNow(ratio);
-    setScrubRatio(null);
+    if (locationX != null) {
+      const r = ratioAt(locationX);
+      progress.value = r;
+      seekNow(r);
+      seekSettleRef.current = { target: r * duration, until: Date.now() + SEEK_SETTLE_MS };
+    }
+    scrubbing.value = 0;
+    setScrubLabel(null);
     onScrubEnd?.();
-  }, [seekNow, onScrubEnd]);
+  }, [ratioAt, progress, seekNow, duration, scrubbing, onScrubEnd]);
 
-  const played = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
-  const shown = scrubRatio == null ? played : scrubRatio;
+  const fillStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: progress.value }] }), [progress]);
+  const thumbStyle = useAnimatedStyle(() => ({ transform: [{ translateX: progress.value * trackW.value }] }), [progress, trackW]);
 
   return (
     <View style={styles.scrubber} pointerEvents="box-none" testID="viewer-scrubber">
-      <Text style={styles.clock}>{formatClock(scrubRatio == null ? currentTime : scrubRatio * duration)}</Text>
+      <Text style={styles.clock}>{formatClock(scrubLabel == null ? currentTime : scrubLabel)}</Text>
       <View
         style={styles.trackHit}
-        onLayout={(e) => setTrackW(e.nativeEvent.layout.width)}
+        onLayout={(e) => { const w = e.nativeEvent.layout.width; trackWRef.current = w; trackW.value = w; }}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onResponderTerminationRequest={() => false}
-        onResponderGrant={(e) => { onScrubStart?.(); const r = ratioAt(e.nativeEvent.locationX); setScrubRatio(r); seekThrottled(r); }}
-        onResponderMove={(e) => { const r = ratioAt(e.nativeEvent.locationX); setScrubRatio(r); seekThrottled(r); }}
-        onResponderRelease={(e) => { finish(ratioAt(e.nativeEvent.locationX)); }}
-        onResponderTerminate={() => { finish(null); }}
+        onResponderGrant={(e) => grab(e.nativeEvent.locationX)}
+        onResponderMove={(e) => move(e.nativeEvent.locationX)}
+        onResponderRelease={(e) => release(e.nativeEvent.locationX)}
+        onResponderTerminate={() => release(null)}
         accessibilityRole="adjustable"
         accessibilityLabel="Video position"
         testID="viewer-scrubber-track"
       >
         <View style={styles.track}>
-          <View style={[styles.trackFill, { width: `${shown * 100}%` }]} />
+          <Animated.View style={[styles.trackFill, fillStyle]} />
         </View>
-        <View style={[styles.thumb, { left: `${shown * 100}%` }]} />
+        <Animated.View style={[styles.thumb, thumbStyle]} />
       </View>
       <Text style={styles.clock}>{formatClock(duration)}</Text>
     </View>
@@ -334,12 +387,14 @@ const styles = StyleSheet.create({
   },
   trackFill: {
     height: 4,
+    width: '100%',
     backgroundColor: '#fff',
+    transformOrigin: 'left',
   },
   thumb: {
     position: 'absolute',
     top: 8,
-    marginLeft: -8,
+    left: -8,
     width: 16,
     height: 16,
     borderRadius: 8,

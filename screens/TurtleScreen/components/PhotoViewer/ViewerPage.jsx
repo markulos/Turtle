@@ -43,12 +43,12 @@ import { containSize } from '../../../../utils/zoomMath';
 import { useHdReady, useIsActive } from './stores';
 
 /**
- * The last stretch of the pop over which the picture fades. Small on purpose:
- * the photo must ARRIVE on its tile fully opaque and only then hand over to
- * the thumbnail underneath — fading earlier reads as the picture dissolving
- * in mid-air. (0.12 of a swift ease-out curve is the final few frames.)
+ * On the way OUT the picture does not fade at all: it stays fully opaque for
+ * the whole flight and switches off the instant it is on its tile (the last
+ * ~2 % of the curve is sub-pixel motion), handing over to the thumbnail
+ * underneath. A gradual fade read as the picture dissolving in mid-air.
  */
-const FADE_SPAN = 0.12;
+const ARRIVAL = 0.02;
 /** Seconds between the player's time reports while a video is active. */
 const TIME_UPDATE_INTERVAL = 0.25;
 
@@ -64,8 +64,9 @@ function usePageStyle(index, sv) {
     const zx = zoomOwner ? sv.tx.value : 0;
     const zy = zoomOwner ? sv.ty.value : 0;
     const hidden = !active && (sv.dragY.value > 0 || p < 1);
+    const arrived = sv.closing.value === 1 && p <= ARRIVAL;
     return {
-      opacity: hidden ? 0 : Math.min(1, p / FADE_SPAN),
+      opacity: hidden || arrived ? 0 : 1,
       transform: [
         { translateX: x + zx },
         { translateY: y + zy },
