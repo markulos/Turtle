@@ -47,7 +47,7 @@ whose promise never returned (app was killed) are re-queued — the server's ded
   Mobile app / bug / uploads) so the root cause of the lost completions can be chased from the notes.
   Still Phase 2 territory: a live '3 of 20' count while the app sleeps (needs JS awake), and a force-quit.
 
-## Phase 2 — a background task that drains the queue (native rebuild)
+## Phase 2 — a background task that drains the queue (native rebuild) — BUILT 2026-09-09, build 3 pending
 
 What: add `expo-background-task` (+ `expo-task-manager`). Register a task that, when iOS grants a
 `BGProcessingTask` window (system-scheduled, minutes to hours apart, needs power/network), loads the
@@ -61,6 +61,12 @@ persisted queue and starts the next batch through Phase 1's fan-out. Also run it
   published against the new fingerprint (`fingerprint:compare` first, as always).
 - Limits: iOS decides WHEN the task runs; Low Power Mode and a force-quit stop it. Realistic outcome:
   a queue drains within the hour of the phone being idle on Wi-Fi/charger, not instantly.
+- Built: `services/backgroundUploadTask.js` defines `turtle-vault-upload-drain` at module scope (imported first in
+  App.js); the provider registers a worker view (`isBusy`/`hasPending`/`kick`), schedules the task on enqueue and on
+  every leave while work remains (`minimumInterval` 15 min), and unregisters it at done. In a window the app launches in
+  the background, the provider's restore resumes the batch, phase 1's fan-out hands files to the session, and the task
+  holds the window ~25 s. `app.json`: plugin `expo-background-task`, `UIBackgroundModes` + `processing`, buildNumber 3.
+  Requires the new native build (fingerprint changes); OTAs after it publish against the new runtime.
 
 ## Phase 3 — Android: a foreground service for the queue (native rebuild)
 
