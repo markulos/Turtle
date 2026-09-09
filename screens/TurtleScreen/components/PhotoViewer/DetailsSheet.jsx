@@ -61,8 +61,8 @@ export default function DetailsSheet({ item, onEditTags, onClose, theme, dark = 
           <Text style={[styles.empty, { color: colors.textMuted }]}>No tags</Text>
         )}
         {tags.map((tag) => (
-          <View key={tag} style={[styles.chip, { backgroundColor: colors.primary }]}>
-            <Text style={[styles.chipText, { color: colors.background }]}>{tag}</Text>
+          <View key={tag} style={[styles.chip, { backgroundColor: colors.chip }]}>
+            <Text style={[styles.chipText, { color: colors.chipText }]} numberOfLines={1}>{tag}</Text>
           </View>
         ))}
       </View>
@@ -124,6 +124,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 18,
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   chipText: {
     fontSize: 14,

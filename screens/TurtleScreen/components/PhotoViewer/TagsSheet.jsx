@@ -133,18 +133,18 @@ export default function TagsSheet({ item, suggestions = [], onCommitTags, onClos
       testID={testID}
       style={({ pressed }) => [
         styles.chip,
-        ghost ? [styles.chipGhost, { borderColor: colors.border }] : { backgroundColor: colors.primary },
+        ghost ? [styles.chipGhost, { borderColor: colors.chipGhostBorder }] : { backgroundColor: colors.chip },
         pressed && styles.pressed,
       ]}
     >
-      {!!icon && <Icon name={icon} size={14} color={ghost ? colors.textPrimary : colors.background} />}
-      <Text style={[styles.chipText, { color: ghost ? colors.textPrimary : colors.background }]}>{tag}</Text>
-      {!locked && !ghost && <Icon name="close-circle" size={16} color={colors.background} />}
+      {!!icon && <Icon name={icon} size={14} color={ghost ? colors.chipGhostText : colors.chipText} />}
+      <Text style={[styles.chipText, { color: ghost ? colors.chipGhostText : colors.chipText }]} numberOfLines={1}>{tag}</Text>
+      {!locked && !ghost && <Icon name="close-circle" size={16} color={colors.chipText} />}
     </Pressable>
   );
 
   return (
-    <ViewerSheet title="Tags" onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} heightRatio={0.66} testID="tags-sheet">
+    <ViewerSheet title="Tags" onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} heightRatio={0.86} testID="tags-sheet">
       {query.length > 0 ? (
         <>
           {!exactExists && (
@@ -237,6 +237,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 18,
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   chipGhost: {
     backgroundColor: 'transparent',

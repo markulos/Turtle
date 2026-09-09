@@ -49,6 +49,10 @@ jest.mock('expo-video', () => ({
   VideoView: () => null,
 }));
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: () => null }));
+jest.mock('expo-blur', () => {
+  const { View } = require('react-native');
+  return { BlurView: View };
+});
 jest.mock('react-native-vector-icons/MaterialCommunityIcons', () => 'Icon');
 jest.mock('../../../../../context/MusicPlayerContext', () => ({
   useMusicPlayer: () => ({ pause: jest.fn() }),

@@ -48,10 +48,16 @@ import { useStageValues } from './stageValues';
 
 const { width: WIN_W, height: WIN_H } = Dimensions.get('window');
 const HOME_SPRING = { damping: 26, stiffness: 260, mass: 1 };
-const OPEN_TIMING = { duration: OPEN_MS, easing: Easing.out(Easing.cubic) };
+/**
+ * iOS Photos' shared-element curve: leaves fast, lands soft — most of the
+ * distance is covered in the first half, the last frames settle onto the
+ * tile. The same curve opens and flies back.
+ */
+const SWIFT = Easing.bezier(0.2, 0.9, 0.25, 1);
+const OPEN_TIMING = { duration: 300, easing: SWIFT };
 const CLOSE_TIMING = { duration: CLOSE_MS, easing: Easing.in(Easing.quad) };
-/** The photo flying back into its grid cell — iOS takes about a third of a second. */
-const FLY_TIMING = { duration: 300, easing: Easing.out(Easing.cubic) };
+/** The photo flying back into its grid cell. */
+const FLY_TIMING = { duration: 340, easing: SWIFT };
 /** A cell measurement that hasn't answered by then closes without a target. */
 const MEASURE_GRACE_MS = 120;
 const FALLBACK_SCALE = 0.85;
@@ -306,6 +312,8 @@ export default function PhotoViewer({
   const handleSeek = useCallback((seconds) => {
     videoControlsRef.current?.seekTo?.(seconds);
   }, []);
+  const handleScrubStart = useCallback(() => { videoControlsRef.current?.beginScrub?.(); }, []);
+  const handleScrubEnd = useCallback(() => { videoControlsRef.current?.endScrub?.(); }, []);
 
   // ── chrome callbacks ─────────────────────────────────────────────────────
   const handleEdit = useCallback(() => { if (activeItem) onEditImage?.(activeItem); }, [activeItem, onEditImage]);
@@ -391,6 +399,8 @@ export default function PhotoViewer({
           onTogglePlay={handleTogglePlay}
           onToggleMute={handleToggleMute}
           onSeek={handleSeek}
+          onScrubStart={handleScrubStart}
+          onScrubEnd={handleScrubEnd}
         />
 
         {children}

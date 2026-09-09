@@ -283,7 +283,7 @@ export default function UpdatesPanel() {
               accessibilityLabel="Promote the preview update to production"
             >
               {releaseBusy ? <ActivityIndicator size="small" color="#fff" /> : <Icon name="rocket-launch-outline" size={14} color="#fff" />}
-              <Text style={styles.primaryBtnText}>Promote preview → production</Text>
+              <Text style={styles.primaryBtnText} numberOfLines={1}>Promote to production</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.secondaryBtn, { opacity: canRollback && !releaseBusy ? 1 : 0.5 }]}
@@ -340,18 +340,21 @@ const makeStyles = (theme) => {
     fact: { fontSize: 12, color: c.textTertiary || c.textSecondary, fontVariant: ['tabular-nums'] },
     availableLine: { fontSize: 12, color: c.accentInfo, marginTop: 4 },
     error: { fontSize: 12, color: c.accentWarning, marginTop: 4, lineHeight: 17 },
-    actions: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+    // Wraps, and each button can shrink: a row of fixed-height buttons with a
+    // long label ran past the card on a 375pt screen ("Promote preview →
+    // production" overflowed the Settings page). See docs/STYLE-RULES.md.
+    actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 8 },
     primaryBtn: {
-      flexDirection: 'row', alignItems: 'center', gap: 6,
+      flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, maxWidth: '100%',
       paddingHorizontal: 14, height: 36, borderRadius: 8,
     },
-    primaryBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+    primaryBtnText: { color: '#fff', fontSize: 13, fontWeight: '600', flexShrink: 1 },
     secondaryBtn: {
-      flexDirection: 'row', alignItems: 'center', gap: 6,
+      flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, maxWidth: '100%',
       paddingHorizontal: 12, height: 36, borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
     },
-    secondaryBtnText: { color: c.textSecondary, fontSize: 12 },
+    secondaryBtnText: { color: c.textSecondary, fontSize: 12, flexShrink: 1 },
     releases: {
       marginTop: 12, paddingTop: 12, gap: 6,
       borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border,
