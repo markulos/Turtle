@@ -163,7 +163,10 @@ export default function PhotoViewer({
     onClosed?.();
   }, [dragStore, onClosed]);
 
-  const close = useCallback(() => {
+  // `vx`/`vy` arrive from a committed pull (the stage's release velocity);
+  // the back button hands a press event and the pinch nothing — both read as
+  // zero, so the retreat starts from rest in those cases.
+  const close = useCallback((vx, vy) => {
     if (closingRef.current) return;
     closingRef.current = true;
     setTagsOpen(false);
@@ -171,9 +174,12 @@ export default function PhotoViewer({
     cancelAnimation(sv.pagerX);
     sv.settling.value = 0;
     // Unwind any pull while the pop retreats toward the tap origin: the photo
-    // flies from the finger back into the grid.
-    sv.dragX.value = withSpring(0, HOME_SPRING);
-    sv.dragY.value = withSpring(0, HOME_SPRING);
+    // flies from the finger back into the grid, carrying the flick it was
+    // released with.
+    const velocityX = typeof vx === 'number' && Number.isFinite(vx) ? vx : 0;
+    const velocityY = typeof vy === 'number' && Number.isFinite(vy) ? vy : 0;
+    sv.dragX.value = withSpring(0, { ...HOME_SPRING, velocity: velocityX });
+    sv.dragY.value = withSpring(0, { ...HOME_SPRING, velocity: velocityY });
     sv.openProgress.value = withTiming(0, CLOSE_TIMING, () => {
       'worklet';
       runOnJS(finishClose)();

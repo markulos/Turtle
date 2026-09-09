@@ -219,8 +219,18 @@ export default function ViewerStage({
           finishPage(step, vx);
           return;
         }
-        if (sv.pagerX.value !== 0) sv.pagerX.value = withTiming(0, ZOOM_SETTLE);
         settleZoomPan(vx, vy);
+        if (sv.pagerX.value !== 0) {
+          // A partial spill springs back like any page settle: flagged, so a
+          // new touch interrupts it the same way, and rest reported when done.
+          sv.settling.value = 1;
+          sv.pagerX.value = withTiming(0, ZOOM_SETTLE, (finished) => {
+            if (!finished) return;
+            sv.settling.value = 0;
+            runOnJS(onRest)(sv.activeIndex.value);
+          });
+          return;
+        }
         runOnJS(onRest)(sv.activeIndex.value);
         return;
       }
@@ -244,6 +254,12 @@ export default function ViewerStage({
           // A settle interrupted mid-handoff: the zoomed page is mostly gone;
           // hand the zoom to the active page before the next gesture reads it.
           if (sv.zoomIndex.value !== sv.activeIndex.value) resetZoom();
+          // The cancelled settle's completion callback never ran, so the shell
+          // still thinks the PREVIOUS page is active: its mounted ±1 window,
+          // the active-id store and selectedMedia all lag the shared index.
+          // Two quick flicks in a row would drag toward a page that was never
+          // mounted. Report the rest now, before this gesture moves anything.
+          runOnJS(onRest)(sv.activeIndex.value);
         }
       })
       .onStart((e) => {
