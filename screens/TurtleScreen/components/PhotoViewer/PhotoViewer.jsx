@@ -50,7 +50,31 @@ const { width: WIN_W, height: WIN_H } = Dimensions.get('window');
 const HOME_SPRING = { damping: 26, stiffness: 260, mass: 1 };
 const OPEN_TIMING = { duration: OPEN_MS, easing: Easing.out(Easing.cubic) };
 const CLOSE_TIMING = { duration: CLOSE_MS, easing: Easing.in(Easing.quad) };
+/** The photo flying back into its grid cell — iOS takes about a third of a second. */
+const FLY_TIMING = { duration: 300, easing: Easing.out(Easing.cubic) };
+/** A cell measurement that hasn't answered by then closes without a target. */
+const MEASURE_GRACE_MS = 120;
+const FALLBACK_SCALE = 0.85;
 const noop = () => {};
+
+/**
+ * Where the stage should grow from / retreat to for a grid cell rect
+ * ({ x, y } = the cell's centre in window coords, width/height = its size):
+ * the offset from screen centre, and the scale that makes the letterboxed
+ * photo about the cell's width. Thumbnails are cover-cropped squares, so this
+ * is an approximation, but it reads as the picture becoming its own tile.
+ * A bare tap point (no size) keeps the old centre pop.
+ */
+function originFor(rect, item) {
+  if (!rect) return { x: 0, y: 0, scale: FALLBACK_SCALE };
+  const x = rect.x - WIN_W / 2;
+  const y = rect.y - WIN_H / 2;
+  if (!(rect.width > 0)) return { x, y, scale: FALLBACK_SCALE };
+  const aspect = item && item.width > 0 && item.height > 0 ? item.width / item.height : 0;
+  const containW = aspect > 0 ? Math.min(WIN_W, WIN_H * aspect) : WIN_W;
+  const scale = Math.min(1, Math.max(0.08, rect.width / containW));
+  return { x, y, scale };
+}
 
 export default function PhotoViewer({
   visible,
@@ -68,6 +92,8 @@ export default function PhotoViewer({
   onShare,
   onEditImage,
   onClosed,
+  /** (mediaId) => Promise<{ x, y, width, height } | null> — the grid cell's window rect, for the fly-back. */
+  measureCell,
   theme,
   insets,
   bottomInset = 24,
@@ -139,8 +165,10 @@ export default function PhotoViewer({
     sv.dragY.value = 0;
     sv.settling.value = 0;
     sv.chrome.value = 1;
-    sv.originX.value = origin ? origin.x - WIN_W / 2 : 0;
-    sv.originY.value = origin ? origin.y - WIN_H / 2 : 0;
+    const from = originFor(origin, first);
+    sv.originX.value = from.x;
+    sv.originY.value = from.y;
+    sv.originScale.value = from.scale;
     sv.openProgress.value = 0;
     sv.openProgress.value = withTiming(1, OPEN_TIMING);
 
@@ -173,18 +201,49 @@ export default function PhotoViewer({
     setDetailsOpen(false);
     cancelAnimation(sv.pagerX);
     sv.settling.value = 0;
-    // Unwind any pull while the pop retreats toward the tap origin: the photo
-    // flies from the finger back into the grid, carrying the flick it was
-    // released with.
     const velocityX = typeof vx === 'number' && Number.isFinite(vx) ? vx : 0;
     const velocityY = typeof vy === 'number' && Number.isFinite(vy) ? vy : 0;
-    sv.dragX.value = withSpring(0, { ...HOME_SPRING, velocity: velocityX });
-    sv.dragY.value = withSpring(0, { ...HOME_SPRING, velocity: velocityY });
-    sv.openProgress.value = withTiming(0, CLOSE_TIMING, () => {
-      'worklet';
-      runOnJS(finishClose)();
-    });
-  }, [sv, finishClose]);
+    const id = activeIdRef.current;
+    const item = itemsRef.current.find((it) => it && it.id === id) || null;
+
+    // iOS Photos: the picture flies back INTO its grid cell — the cell of the
+    // photo on screen now, not the one that was tapped. The gallery measures
+    // it (the cell may be a different one after swiping); with no answer (cell
+    // recycled off-screen, or nothing to measure) the photo shrinks in place
+    // while the backdrop clears.
+    const run = (rect) => {
+      const to = originFor(rect, item);
+      sv.originX.value = to.x;
+      sv.originY.value = to.y;
+      sv.originScale.value = to.scale;
+      if (rect) {
+        // Unwind the pull on the same clock as the retreat so both arrive
+        // in the cell together.
+        sv.dragX.value = withTiming(0, FLY_TIMING);
+        sv.dragY.value = withTiming(0, FLY_TIMING);
+        sv.openProgress.value = withTiming(0, FLY_TIMING, () => {
+          'worklet';
+          runOnJS(finishClose)();
+        });
+        return;
+      }
+      sv.dragX.value = withSpring(0, { ...HOME_SPRING, velocity: velocityX });
+      sv.dragY.value = withSpring(0, { ...HOME_SPRING, velocity: velocityY });
+      sv.openProgress.value = withTiming(0, CLOSE_TIMING, () => {
+        'worklet';
+        runOnJS(finishClose)();
+      });
+    };
+
+    if (!measureCell || !id) { run(null); return; }
+    let started = false;
+    const start = (rect) => { if (started) return; started = true; run(rect || null); };
+    try {
+      Promise.resolve(measureCell(id)).then(start, () => start(null));
+    } catch { start(null); }
+    // Never hang a close on a measurement that doesn't come back.
+    setTimeout(() => start(null), MEASURE_GRACE_MS);
+  }, [sv, finishClose, measureCell]);
 
   // The active photo disappeared from the list (deleted underneath us).
   useEffect(() => {

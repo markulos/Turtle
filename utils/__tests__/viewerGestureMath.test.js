@@ -1,5 +1,5 @@
 import {
-  MODE, lockMode, rubberBand, pagerOffset, pageTarget, pageTranslate, settleDuration,
+  MODE, lockMode, rubberBand, pagerOffset, pageTarget, pageTranslate, rebasePagerX, settleDuration,
   shouldCommitDismiss, shouldOpenDetails, shouldCommitEdgeBack, dismissScale, dismissBackdrop,
   dismissChrome, splitZoomPan, shouldHandoff, clampIndex, PAGE_DIRECTION, GUTTER,
   SETTLE_MIN_MS, SETTLE_MAX_MS,
@@ -69,6 +69,28 @@ describe('pageTranslate', () => {
     expect(pageTranslate(3, 3, 0, pageW)).toBe(0);
     expect(pageTranslate(4, 3, 0, pageW)).toBe(pageW * PAGE_DIRECTION);
     expect(pageTranslate(2, 3, -50, pageW)).toBe(-pageW * PAGE_DIRECTION - 50);
+  });
+});
+
+describe('rebasePagerX', () => {
+  test('a page commit leaves every page exactly where it was (no visible jump)', () => {
+    const pageW = W + GUTTER;
+    for (const step of [1, -1]) {
+      for (const pagerX of [-250, -60, 0, 90, 300]) {
+        const rebased = rebasePagerX(pagerX, step, pageW);
+        for (const i of [1, 2, 3, 4, 5]) {
+          expect(pageTranslate(i, 3 + step, rebased, pageW)).toBeCloseTo(pageTranslate(i, 3, pagerX, pageW));
+        }
+      }
+    }
+  });
+  test('after a leftward swipe the settle to 0 carries the next page in from the right', () => {
+    const pageW = W + GUTTER;
+    // Finger dragged the active page 200pt left, page 4 sits at pageW - 200 (partly on screen).
+    const rebased = rebasePagerX(-200, 1, pageW);
+    expect(pageTranslate(4, 4, rebased, pageW)).toBeCloseTo(pageW - 200); // still where the finger left it
+    expect(pageTranslate(4, 4, 0, pageW)).toBe(0);                        // and it settles to centre
+    expect(pageTranslate(3, 4, 0, pageW)).toBe(-pageW * PAGE_DIRECTION);  // the old page leaves leftward
   });
 });
 

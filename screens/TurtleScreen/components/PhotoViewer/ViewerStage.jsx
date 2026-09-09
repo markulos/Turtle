@@ -56,6 +56,7 @@ import {
   lockMode,
   pageTarget,
   pagerOffset,
+  rebasePagerX,
   settleDuration,
   shouldCommitDismiss,
   shouldCommitEdgeBack,
@@ -133,7 +134,9 @@ export default function ViewerStage({
       'worklet';
       if (step !== 0) {
         sv.activeIndex.value = sv.activeIndex.value + step;
-        sv.pagerX.value = sv.pagerX.value - step * sv.pageW * PAGE_DIRECTION;
+        // Every page keeps the x it had; the settle to 0 below is what
+        // carries the swipe through to the next photo (see rebasePagerX).
+        sv.pagerX.value = rebasePagerX(sv.pagerX.value, step, sv.pageW);
       }
       sv.settling.value = 1;
       const remaining = Math.abs(sv.pagerX.value);
@@ -443,11 +446,14 @@ export default function ViewerStage({
   // so the photo flies from the finger back into the grid.
   const popStyle = useAnimatedStyle(() => {
     const p = sv.openProgress.value;
+    const from = sv.originScale.value;
     return {
       transform: [
         { translateX: sv.originX.value * (1 - p) },
         { translateY: sv.originY.value * (1 - p) },
-        { scale: 0.85 + 0.15 * p },
+        // From the grid cell's size (originScale) up to full size — and back
+        // down into the cell on close.
+        { scale: from + (1 - from) * p },
       ],
     };
   }, [sv]);

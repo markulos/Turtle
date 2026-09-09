@@ -124,6 +124,19 @@ export function pageTranslate(index, activeIndex, pagerX, pageW) {
   return (index - activeIndex) * pageW * PAGE_DIRECTION + pagerX;
 }
 
+/**
+ * The pager offset after a page commit that steps activeIndex by `step`,
+ * chosen so that EVERY page keeps the exact x it had — the re-base is
+ * invisible, and the settle from here to 0 is what carries the swipe through.
+ * (pageTranslate(i, a + step, rebased, w) === pageTranslate(i, a, pagerX, w).)
+ * The sign was once inverted here, which made the next photo arrive from the
+ * wrong side while the finger's page slid back — pinned by a test now.
+ */
+export function rebasePagerX(pagerX, step, pageW) {
+  'worklet';
+  return pagerX + step * pageW * PAGE_DIRECTION;
+}
+
 /** Page settle time: longer for more distance, shorter for a harder flick. */
 export function settleDuration(remaining, velocity) {
   'worklet';

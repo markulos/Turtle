@@ -201,10 +201,13 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
   },
+  // Transparent, not black: the backdrop behind the stage is the black. A
+  // black page box would shrink and fly along with the photo on a pull-down,
+  // and iOS moves only the picture.
   clip: {
     flex: 1,
     overflow: 'hidden',
-    backgroundColor: '#000',
+    backgroundColor: 'transparent',
   },
 });
 
