@@ -124,19 +124,29 @@ const runNotifOp = (fn) => { notifOpChain = notifOpChain.then(fn, fn); return no
 // this reflects progress during the background grace window + on the next time
 // JS runs; a truly always-live lock-screen bar is a Live Activity (native).
 // Granted-only (never prompts) and fully guarded → silent no-op pre-rebuild.
-export async function updateUploadProgress({ pct, current, total, duplicates = 0 }) {
+/** The notification's one-line story of the batch, from its counts. */
+export function progressBody({ uploaded = 0, total = 0, inflight = 0, duplicates = 0, failed = 0 }) {
+  const left = Math.max(0, total - uploaded - duplicates - failed - inflight);
+  const parts = [`${uploaded} of ${total} uploaded`];
+  if (inflight > 0) parts.push(`${inflight} in flight`);
+  if (left > 0) parts.push(`${left} left`);
+  if (duplicates > 0) parts.push(`${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  return parts.join(' · ');
+}
+
+export async function updateUploadProgress({ pct, total, uploaded = 0, inflight = 0, duplicates = 0, failed = 0 }) {
   const myEpoch = notifEpoch; // captured before queueing; a later clear invalidates it
   return runNotifOp(async () => {
     if (myEpoch !== notifEpoch) return false;           // a clear was requested after this post
     try {
       if (!(await progressPermitted())) return false;
       if (myEpoch !== notifEpoch) return false;         // re-check across the async gap
-      const dupPart = duplicates > 0 ? ` · ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped` : '';
       await Notifications.scheduleNotificationAsync({
         identifier: PROGRESS_ID,
         content: {
           title: `Uploading to your vault · ${pct}%`,
-          body: `${current} of ${total}${dupPart}`,
+          body: progressBody({ uploaded, total, inflight, duplicates, failed }),
           sticky: true,                 // Android: ongoing while the batch runs
           interruptionLevel: 'passive', // iOS 15+: quiet, list-only updates
           data: { type: 'upload-progress' },

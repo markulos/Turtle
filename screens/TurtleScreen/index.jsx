@@ -46,6 +46,7 @@ import { generatedName } from '../../utils/avatar';
 import { useCommandBus } from '../../context/CommandBusContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { interceptAndSend } from '../../services/AICommandInterceptor';
+import { sendOrQueue } from '../../services/offlineQueue';
 import VaultOverlay from './components/VaultOverlay';
 import TimerMessage from './components/TimerMessage';
 import PomodoroSettings from './components/PomodoroSettings';
@@ -1539,18 +1540,20 @@ export default function TurtleScreen() {
         setIsLoading(false);
 
         try {
-          const res = await api.post('/turtle/note', {
+          // Through the outbox: offline, the note is parked and lands on reconnect.
+          const r = await sendOrQueue(api, { method: 'post', path: '/turtle/note', label: 'note', body: {
             content: content || raw,
             description: '',
             type: 'note',
             tags,
             done: false,
-          });
+          } });
+          const res = r.queued ? { success: true } : r.result;
           setMessages(prev => [{
             id: generateId(),
             text: res?.success === false
               ? `⚠️ Could not save: ${res?.error || 'unknown error'}`
-              : `📝 Note saved${tags.length ? ` · tags: ${tags.join(', ')}` : ''}`,
+              : `📝 Note saved${r.queued ? ' (offline · will sync)' : ''}${tags.length ? ` · tags: ${tags.join(', ')}` : ''}`,
             sender: 'system',
             timestamp: new Date().toISOString(),
           }, ...prev]);
@@ -1589,18 +1592,20 @@ export default function TurtleScreen() {
         setIsLoading(false);
 
         try {
-          const res = await api.post('/turtle/note', {
+          // Through the outbox: offline, the todo is parked and lands on reconnect.
+          const r = await sendOrQueue(api, { method: 'post', path: '/turtle/note', label: 'todo', body: {
             content: content || raw,
             description: '',
             type: 'todo',
             tags,
             done: false,
-          });
+          } });
+          const res = r.queued ? { success: true } : r.result;
           setMessages(prev => [{
             id: generateId(),
             text: res?.success === false
               ? `⚠️ Could not save: ${res?.error || 'unknown error'}`
-              : `✅ Todo added${tags.length ? ` · tags: ${tags.join(', ')}` : ''}`,
+              : `✅ Todo added${r.queued ? ' (offline · will sync)' : ''}${tags.length ? ` · tags: ${tags.join(', ')}` : ''}`,
             sender: 'system',
             timestamp: new Date().toISOString(),
           }, ...prev]);

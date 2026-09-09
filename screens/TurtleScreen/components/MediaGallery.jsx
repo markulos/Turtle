@@ -114,6 +114,7 @@ import {
   formatBoardMetadata,
   normalizeAlbumsPayload,
 } from '../../../utils/photoVaultBoards';
+import { sendOrQueue } from '../../../services/offlineQueue';
 
 // Create an animated version of FlashList to match our existing architecture
 const AnimatedFlashList = Animated.createAnimatedComponent(FlashList);
@@ -1132,14 +1133,16 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
       // fails (the optimistic state already mirrors the intended result).
       (async () => {
         try {
-          const res = await api.put('/media/tags/bulk', { ids, add: explicitAdditions, remove: explicitRemovals });
-          if (!res || !res.success) throw new Error(res?.error || 'bulk tag route unavailable');
+          // Through the outbox: offline, the bulk write is parked and replays
+          // on reconnect; the grid keeps the optimistic tags.
+          const r = await sendOrQueue(api, { method: 'put', path: '/media/tags/bulk', body: { ids, add: explicitAdditions, remove: explicitRemovals }, label: 'bulk tags' });
+          if (!r.queued && (!r.result || !r.result.success)) throw new Error(r.result?.error || 'bulk tag route unavailable');
         } catch (e) {
           try {
             const entries = Object.entries(finalById);
             for (let i = 0; i < entries.length; i += 6) {
               await Promise.all(entries.slice(i, i + 6).map(([id, tags]) =>
-                api.put(`/media/${id}/tags`, { tags })
+                sendOrQueue(api, { method: 'put', path: `/media/${id}/tags`, body: { tags }, key: `tags:${id}`, label: 'tags' })
               ));
             }
           } catch (e2) {
@@ -2828,9 +2831,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     });
     setGlobalAlbums(prev => Array.from(new Set([...prev, ...tags])).sort());
 
-    // 2. Persist in the background; revert the tags string on failure.
-    api.put(`/media/${mediaId}/tags`, { tags })
-      .then(res => { if (!res || !res.success) throw new Error(res?.error || 'rejected'); })
+    // 2. Persist in the background THROUGH THE OUTBOX: offline, the write is
+    // parked (key per photo, so repeated edits collapse to the last) and the
+    // optimistic tags stand; only a permanent rejection reverts.
+    sendOrQueue(api, { method: 'put', path: `/media/${mediaId}/tags`, body: { tags }, key: `tags:${mediaId}`, label: 'tags' })
+      .then(r => { if (!r.queued && (!r.result || !r.result.success)) throw new Error(r.result?.error || 'rejected'); })
       .catch(err => {
         console.error('[MediaGallery] Tag save failed, reverting:', err?.message);
         setSelectedMedia(prev => (prev && prev.id === mediaId ? { ...prev, tags: prevTagsString } : prev));
@@ -2864,8 +2869,10 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
         setGlobalAlbums(prev => Array.from(new Set([...prev, 'Favourites'])).sort());
       }
 
-      // 2. Persist in the background (the handler only reads `tags`).
-      await api.put(`/media/${item.id}/tags`, { tags: newTags });
+      // 2. Persist in the background (the handler only reads `tags`) through
+      // the outbox — same key as commitTags, so a favourite toggle and a tag
+      // edit on one photo collapse to the last write.
+      await sendOrQueue(api, { method: 'put', path: `/media/${item.id}/tags`, body: { tags: newTags }, key: `tags:${item.id}`, label: 'favourite' });
 
       // 3. NO full-library refetch — the optimistic updates above already
       // mirror the server state. The one case that needs more is
