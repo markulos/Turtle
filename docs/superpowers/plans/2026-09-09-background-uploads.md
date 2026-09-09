@@ -17,7 +17,7 @@ with the least native change first and the honest limits of each platform writte
 - `app.json` declares only `UIBackgroundModes: ["audio"]`. No `expo-background-task` /
   `expo-task-manager`. Android has no background execution at all once the activity is gone.
 
-## Phase 1 — fan out before suspending (JS only, ships as an OTA)
+## Phase 1 — fan out before suspending (JS only, ships as an OTA) — BUILT 2026-09-09
 
 What: when the app is about to background (`AppState` → `background`) — or simply always — hand the
 background session SEVERAL files instead of one. Create upload tasks for the next N queued items
@@ -34,6 +34,10 @@ whose promise never returned (app was killed) are re-queued — the server's ded
 - Verify: queue 20 photos, background the app, wait, foreground → all 20 uploaded with no duplicates;
   same with the app swiped away 30 s in (the in-flight batch completes; the rest resume on launch).
 - No rebuild, no new permission.
+- Built: `VaultUploadContext` runs a pool (2 in the foreground; the AppState listener wakes it to fan out to 8 the
+  moment the app backgrounds), items are persisted as `inflight` on every start and reset to pending on restore (the
+  pre-check skips what landed), and `streamMultipartUpload`'s stall watchdog ignores the timer gap of a suspension.
+  Server-side `clientImportId` dedupe for photos (the audio path has it) moves to Phase 4.
 
 ## Phase 2 — a background task that drains the queue (native rebuild)
 
