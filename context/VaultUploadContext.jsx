@@ -65,6 +65,20 @@ const VIDEO_MIME = {
 // Terminal per-item states — anything here counts toward batch progress.
 const TERMINAL = new Set(['uploaded', 'duplicate', 'failed', 'missing']);
 
+// ── Background uploads, phase 1 (docs/superpowers/plans/2026-09-09-background-uploads.md)
+// Every upload task rides an iOS background NSURLSession (expo-file-system's
+// legacy default), so a file that is IN FLIGHT keeps transferring after the
+// app is suspended — but only files already handed to the session do. So the
+// worker keeps a small pool in the foreground and, the moment the app goes to
+// the background, FANS OUT: it hands the session the next several files at
+// once and lets them run while the app sleeps. An item in the session is
+// `inflight` (not terminal; persisted per start). If the app is killed, the
+// next launch resets in-flight items to pending and the per-segment duplicate
+// pre-check skips whatever actually landed — so nothing uploads twice and
+// nothing is lost.
+const FOREGROUND_CONCURRENCY = 2;
+const BACKGROUND_FANOUT = 8;
+
 // Tally a batch's item outcomes. Module-scope + pure (reads only its arg +
 // TERMINAL) so both the publisher and the OS-notification driver can call it.
 function countsOf(batch) {
@@ -99,7 +113,13 @@ export function VaultUploadProvider({ children }) {
   // closures in the long-running loop).
   const batchRef = useRef(null);
   const workerBusyRef = useRef(null);
-  const currentPctRef = useRef(0);   // live % of the item currently streaming
+  // Live progress of the items currently streaming, summed (two items at 50%
+  // = 100): pctOf divides by 100, so the sum is "items' worth of progress".
+  const currentPctRef = useRef(0);
+  const itemPctRef = useRef(new Map()); // item key → its own %
+  // The pool's "re-evaluate now" hook: the AppState listener pulls it when the
+  // app backgrounds so the fan-out starts immediately, not at the next settle.
+  const wakePoolRef = useRef(null);
   const [snapshot, setSnapshot] = useState(null);
   const lastShownPctRef = useRef(-1);
   // Pill visibility. `hidden` collapses the floating pill during an upload
@@ -285,7 +305,20 @@ export function VaultUploadProvider({ children }) {
       !batch.abortController.signal.aborted;
     workerBusyRef.current = batch;
     batch.status = 'uploading';
+    // The worker is single-flight, so any item still marked in-flight at entry
+    // is a leftover from a run that died (kill, crash): back to pending. The
+    // pre-check below skips it if its bytes already landed.
+    for (const it of batch.items) if (it.status === 'inflight') { it.status = 'pending'; delete it.inflightAt; }
+    itemPctRef.current.clear();
+    currentPctRef.current = 0;
     publish();
+
+    // Wake signal for the pool: resolved by the AppState listener (background
+    // → fan out NOW) and re-armed on every use.
+    const wake = { promise: null, resolve: null };
+    const armWake = () => { wake.promise = new Promise((r) => { wake.resolve = r; }); };
+    armWake();
+    wakePoolRef.current = () => { const r = wake.resolve; armWake(); r?.(); };
 
     try {
       // Photo-library permission: needed to resolve assetIds (resume) and for
@@ -371,15 +404,16 @@ export function VaultUploadProvider({ children }) {
         await persist();
       }
 
-      // 3. UPLOAD LOOP (this segment) — stream the survivors one by one,
-      //    checkpointing after each so a killed app resumes at the next item.
-      for (const item of segment) {
-        if (TERMINAL.has(item.status)) continue;
-        if (!isCurrentBatch()) return;
+      // 3. UPLOAD POOL (this segment) — stream the survivors through a small
+      //    pool, checkpointing on every start AND every finish so a killed app
+      //    knows exactly what was in the session. Foreground: 2 at a time.
+      //    Background: fan out to 8 — the background session carries them
+      //    while the app sleeps.
+      const uploadOne = async (item) => {
         let tempThumbnailUri = null;
         try {
           const meta = item.meta || (await resolveItem(item));
-          if (!meta) { item.status = 'missing'; item.meta = null; continue; }
+          if (!meta) { item.status = 'missing'; item.meta = null; return; }
 
           // Multipart TEXT fields go as a flat string map (the streaming
           // uploader takes `parameters`, not a FormData/blob).
@@ -431,13 +465,17 @@ export function VaultUploadProvider({ children }) {
           const sizeMB = (meta.size || 0) / (1024 * 1024);
           console.log(`[VaultUpload] ▶ ${mediaName} · ${sizeMB.toFixed(1)}MB · ${mediaType}${isVideo ? ' (video)' : ''}`);
 
-          // Monotonic per-item progress, fed by the native streaming callback.
+          // Monotonic per-item progress, fed by the native streaming callback;
+          // the batch-level figure is the SUM over the pool.
           let itemPct = 0;
-          currentPctRef.current = 0;
+          itemPctRef.current.set(item.key, 0);
           const onProgress = (pct) => {
             if (pct <= itemPct) return;
             itemPct = pct;
-            currentPctRef.current = pct;
+            itemPctRef.current.set(item.key, pct);
+            let sum = 0;
+            for (const v of itemPctRef.current.values()) sum += v;
+            currentPctRef.current = sum;
             publishPctTick();
           };
 
@@ -460,13 +498,38 @@ export function VaultUploadProvider({ children }) {
           item.status = 'failed';
           item.meta = null; // terminal — release
         } finally {
+          delete item.inflightAt;
           if (tempThumbnailUri) FileSystem.deleteAsync(tempThumbnailUri, { idempotent: true }).catch(() => {});
+          itemPctRef.current.delete(item.key);
+          let sum = 0;
+          for (const v of itemPctRef.current.values()) sum += v;
+          currentPctRef.current = sum;
           if (isCurrentBatch()) {
-            currentPctRef.current = 0;
             publish();
             await persist();
           }
         }
+      };
+
+      const active = new Map(); // item key → its running upload
+      const limit = () => (appActiveRef.current ? FOREGROUND_CONCURRENCY : BACKGROUND_FANOUT);
+      for (;;) {
+        if (!isCurrentBatch()) return;
+        // Top the pool up to the current limit — which jumps to the fan-out
+        // size the moment the app backgrounds (the wake below re-runs this).
+        let started = 0;
+        for (const item of segment) {
+          if (active.size >= limit()) break;
+          if (item.status !== 'pending' && item.status !== undefined) continue;
+          item.status = 'inflight';
+          item.inflightAt = Date.now();
+          const run = uploadOne(item).finally(() => { active.delete(item.key); });
+          active.set(item.key, run);
+          started += 1;
+        }
+        if (started > 0) { publish(); await persist(); }
+        if (active.size === 0) break;
+        await Promise.race([...active.values(), wake.promise]);
       }
 
       // Segment boundary: yield the JS thread and give iOS a beat to drain
@@ -501,6 +564,7 @@ export function VaultUploadProvider({ children }) {
       }
     } finally {
       if (workerBusyRef.current === batch) workerBusyRef.current = null;
+      if (wakePoolRef.current) wakePoolRef.current = null;
     }
   }, [ownsBatch, publish, publishPctTick, persist]);
 
@@ -632,6 +696,9 @@ export function VaultUploadProvider({ children }) {
         saved.abortController = new AbortController();
         saved.items = saved.items.map((item) => ({
           ...item,
+          // In-flight when the app died: back to pending. If the background
+          // session finished it anyway, the pre-check marks it duplicate.
+          status: item.status === 'inflight' ? 'pending' : item.status,
           clientImportId: item.clientImportId || Crypto.randomUUID(),
         }));
         batchRef.current = saved;
@@ -658,6 +725,9 @@ export function VaultUploadProvider({ children }) {
     const sub = AppState.addEventListener('change', (s) => {
       appActiveRef.current = (s === 'active');
       if (s === 'active' && batchRef.current?.status === 'paused') processBatch();
+      // Leaving: fan the pool out NOW, while iOS still gives us a few seconds
+      // of runtime — the background session carries those files while we sleep.
+      if (s !== 'active') wakePoolRef.current?.();
       driveProgressNotification();
     });
     return () => sub.remove();

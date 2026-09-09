@@ -68,8 +68,20 @@ export async function streamMultipartUpload({
           abortHandler();
           return;
         }
+        let lastTickAt = Date.now();
         stallTimer = setInterval(() => {
-          const idleMs = Date.now() - lastProgressAt;
+          const now = Date.now();
+          // A gap of several ticks means the app was SUSPENDED (timers don't
+          // run while iOS holds the app; the background session kept going).
+          // Not the transfer's fault — restart the idle clock instead of
+          // cancelling a task that may have finished while we slept.
+          if (now - lastTickAt > 15000) {
+            lastTickAt = now;
+            lastProgressAt = now;
+            return;
+          }
+          lastTickAt = now;
+          const idleMs = now - lastProgressAt;
           const threshold = allSentAt ? UPLOAD_PROCESSING_MS : UPLOAD_STALL_MS;
           if (idleMs > threshold) {
             const phase = allSentAt ? 'server processing' : 'transfer';

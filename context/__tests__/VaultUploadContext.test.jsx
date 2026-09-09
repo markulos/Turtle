@@ -70,6 +70,55 @@ function Probe() {
   return <Text testID="state">{JSON.stringify(latestState.state)}</Text>;
 }
 
+describe('VaultUploadProvider background fan-out (phase 1)', () => {
+  let appStateListener = null;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { AppState } = require('react-native');
+    AppState.currentState = 'active';
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, fn) => {
+      appStateListener = fn;
+      return { remove: () => { appStateListener = null; } };
+    });
+    mockAuth = { isAuthenticated: true, token: 'token-a', authIdentity: 'sub:account-a', authGeneration: 'generation-a' };
+    let n = 0;
+    mockRandomUUID.mockImplementation(() => `import-${++n}`);
+    // Uploads stay OPEN until the test releases them.
+    mockStreamMultipartUpload.mockImplementation(() => new Promise(() => {}));
+    global.fetch = jest.fn().mockImplementation(async (_url, init) => {
+      const items = JSON.parse(init.body).items;
+      return { json: async () => ({ success: true, results: items.map(() => ({ duplicate: false })) }) };
+    });
+  });
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  test('two at a time in the foreground; backgrounding hands the session the rest of the segment', async () => {
+    await render(
+      <VaultUploadProvider>
+        <Probe />
+      </VaultUploadProvider>
+    );
+    await act(async () => {
+      latestActions.enqueue({ assets: ['a', 'b', 'c', 'd', 'e', 'f'].map(asset), tags: [] });
+    });
+    await waitFor(() => expect(mockStreamMultipartUpload).toHaveBeenCalledTimes(2));
+    // Nothing more while the app is up: the pool holds at two.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockStreamMultipartUpload).toHaveBeenCalledTimes(2);
+
+    await act(async () => { appStateListener('background'); });
+    await waitFor(() => expect(mockStreamMultipartUpload).toHaveBeenCalledTimes(6));
+
+    // Every started item is checkpointed as in-flight, never as done.
+    const lastSave = AsyncStorage.setItem.mock.calls.at(-1)[1];
+    const saved = JSON.parse(lastSave);
+    expect(saved.items.filter((it) => it.status === 'inflight')).toHaveLength(6);
+    expect(saved.items.some((it) => it.status === 'uploaded')).toBe(false);
+  });
+});
+
 const asset = (id) => ({
   assetId: id,
   uri: `file:///picker/${id}.jpg`,
