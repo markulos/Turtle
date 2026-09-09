@@ -28,9 +28,9 @@ import {
   Share as RNShareSheet,
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-// The viewer's media-cell layer (video cell, progressive image, zoomable image
-// cell) — extracted verbatim; see viewerMedia.jsx.
-import { FullScreenVideoPlayer, ImageViewer } from './viewerMedia';
+// The full-screen viewer: one gesture tree, flat chrome, the tags and details
+// sheets. Owns nothing about the data — see PhotoViewer/PhotoViewer.jsx.
+import PhotoViewer from './PhotoViewer';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -244,20 +244,6 @@ const tagsOf = (item) => {
 };
 
 const THUMBNAIL_SIZE = width / 3 - 0.5;
-// The black gutter between pager pages. iOS Photos uses ~20–24pt; 15 read as
-// the photos almost touching. Every piece of the paging model derives from
-// ITEM_WIDTH (getItemLayout, snapToInterval, the open-offset, index math), so
-// changing GAP here changes all of them consistently — the historical
-// "clipped right edge" bug came from mixed alignment assumptions, not from
-// this constant.
-const GAP = 24;
-const ITEM_WIDTH = width + GAP;
-
-// How long after the pager's last scroll frame a single-tap is still treated
-// as part of the swipe rather than a chrome toggle. Long enough to cover the
-// gap between finger-up and the first momentum frame (~1 frame) plus the
-// snap settle; short enough that a deliberate tap after a swipe still lands.
-const PAGER_TAP_QUIET_MS = 300;
 
 
 // Static overlay styles for the local-sync picker cell (no theme dependency).
@@ -391,36 +377,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   // === VIEWER STATE ===
   const [selectedMedia, setSelectedMedia] = useState(null);
 
-  // ── Viewer load-progress bar ────────────────────────────────────
-  //
-  // A 3px-tall progress indicator at the top of the fullscreen viewer
-  // tracks Layer 2 (high-res) bytes-in-flight. The user asked for
-  // explicit feedback on tap-thumbnail loads since the high-res
-  // download can take a few seconds for HEIC originals.
-  //
-  // Two animated values:
-  //   • viewerProgressAnim — interpolated to translateX of an inner bar
-  //                        clipped by an overflow:hidden parent. Trick
-  //                        avoids width animation (which can't use the
-  //                        native driver) — translateX with native
-  //                        driver stays at 60fps even under load.
-  //   • viewerProgressOpacityAnim — visibility. Hidden while no load is in
-  //                        flight; faded in when progress events start
-  //                        arriving; faded out after onLoad fires.
-  //
-  // A 150ms show-delay swallows the visual flicker on cache hits
-  // (where load completes in <150ms and we'd otherwise flash a bar
-  // that adds nothing). Real loads (multi-second HEIC fetches) clear
-  // the timer the moment the first progress event arrives.
-  const viewerProgressAnim = useRef(new Animated.Value(0)).current;
-  const viewerProgressOpacityAnim = useRef(new Animated.Value(0)).current;
-  const viewerProgressShowTimerRef = useRef(null);
-  // No shimmer / gradient / decorative animation — the only motion
-  // on the bar is the fill itself growing with progress (the
-  // translateX of the inner View, driven by viewerProgressAnim).
-  // Matches the web app's restrained aesthetic: hairline track,
-  // solid white fill, fade in/out, nothing extra.
-
   // ── Albums-tab loading bar ──────────────────────────────────
   //
   // Separate from the viewer's progress bar above because the album
@@ -449,61 +405,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     loop.start();
     return () => { loop.stop(); };
   }, [isAlbumsLoading, albumsLoadingAnim]);
-
-  // The bar stays hidden. Under the HD-manager model there is no in-view
-  // network load left to narrate: cells swap to a display variant that the
-  // manager has ALREADY prefetched into the disk cache, so the "load" a bar
-  // would track is over before the swap happens. The show-delay timer this
-  // effect used to arm was fed completion by cell callbacks that no longer
-  // exist — kept armed, it would surface an empty bar and strand it at 0%.
-  useEffect(() => {
-    viewerProgressOpacityAnim.setValue(0);
-    viewerProgressAnim.setValue(0);
-  }, [selectedMedia?.id, viewerProgressAnim, viewerProgressOpacityAnim]);
-
-  // (The old handleLoadProgress/handleLoadComplete pair lived here. They fed
-  // the bar from cell load callbacks; under the HD-manager model cells never
-  // load into the view over the network, so both went with their feed.)
-  const scaleAnim = useRef(new Animated.Value(0.8)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
-  const [infoVisible, setInfoVisible] = useState(true);
-  const infoOpacityAnim = useRef(new Animated.Value(1)).current;
-  const [zoomScale, setZoomScale] = useState(1); // Track zoom level for close prevention
-  // Mirror for the gesture callbacks. `swipeResponder` below is built once in a
-  // useRef, so it closes over the FIRST render's `zoomScale` forever: reading
-  // the state directly there meant the "don't dismiss while zoomed" guard
-  // always compared against 1 and never fired. The ref is read live.
-  //
-  // There is deliberately NO "is a gesture in flight" flag here. The first cut
-  // had one, raised on pinch start and lowered on gesture finalize, to freeze
-  // the pager before a pinch could nudge it. Pinch and pan finalize in either
-  // order, so the two gestures fought over the single boolean: it flapped
-  // mid-pinch (pager scroll cancelling and re-enabling under the fingers — the
-  // jitter) and could latch ON after the cell deactivated, which froze paging
-  // altogether. The pager now keys off the settled zoom state alone.
-  const zoomScaleRef = useRef(1);
-  // Chrome opacity while zoomed, as an ANIMATED value. The chrome used to be
-  // `opacity: zoomScale > 1.05 ? 0 : <Animated chain>` — a hard cut on a state
-  // flip (and a swap between a plain number and an Animated node, which
-  // rebinds the native prop). iOS fades the chrome away as the zoom engages;
-  // 150ms matches its feel.
-  const zoomChromeAnim = useRef(new Animated.Value(1)).current;
-  const reportZoomScale = useCallback((z) => {
-    zoomScaleRef.current = z;
-    // Dev probe attribution. A zoom flip is the one viewer interaction that
-    // writes GALLERY state without any respond()/mark() of its own, so a stall
-    // it causes was being filed under whatever the last labelled gesture was —
-    // "grid:openPhoto blocks for 254ms" was this commit, long after the open.
-    // Naming it here makes the next finding say what actually blocked.
-    gestureProbe.mark('viewer:zoom');
-    setZoomScale(z);
-    Animated.timing(zoomChromeAnim, {
-      toValue: z > 1.05 ? 0 : 1,
-      duration: 150,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: true,
-    }).start();
-  }, [zoomChromeAnim]);
 
   // "A pager swipe is in flight" — a hand-rolled store rather than state, and
   // deliberately so: the only consumers are the image cells (they stand their
@@ -574,6 +475,14 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     });
   }, [pagerDragStore, viewerHdStore]);
 
+  // The pager went quiet — PhotoViewer released the drag flag at rest — so
+  // drain any HD flags that finished warming during the swipe. The FlatList's
+  // momentum-end / drag-settle handlers used to do this; the flag itself is
+  // now the signal.
+  useEffect(() => pagerDragStore.subscribe((dragging) => {
+    if (!dragging) flushHdMarks();
+  }), [pagerDragStore, flushHdMarks]);
+
   const ensureViewerHd = useCallback((item) => {
     if (!item?.id || item.isSkeleton || item.type === 'video') return;
     const id = item.id;
@@ -595,9 +504,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   // used to happen in the pager's settle frame on EVERY page change — with the
   // touch pipeline being JS-bound, a swipe landing during that storm went dead
   // ("massive non-responsive period", worst right after an HD load piled its
-  // own state flips on top). The cells now read activity from THIS store (two
-  // cells re-render per page change, nothing else), and the selectedMedia
-  // adoption is deferred until interactions finish (see syncSelectedFromOffset).
+  // own state flips on top). The pages read activity from THIS store (two
+  // pages re-render per page change, nothing else); PhotoViewer sets it the
+  // moment a page settles and hands selectedMedia over only at rest
+  // (handleViewerIndexSettled), so the whole-gallery re-render never lands
+  // on a gesture frame.
   const viewerActiveStoreRef = useRef(null);
   if (viewerActiveStoreRef.current === null) {
     const listeners = new Set();
@@ -614,76 +525,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   }
   const viewerActiveStore = viewerActiveStoreRef.current;
 
-  // === PULL-TO-DISMISS (iOS Photos style) ===
-  // dragY follows the finger on a downward drag of the open photo. The image
-  // translates with it, scales down slightly, and the black backdrop fades —
-  // release past DISMISS_DY (or with enough downward velocity) flings it the
-  // rest of the way and closes; otherwise it springs back home.
-  const dragY = useRef(new Animated.Value(0)).current;
-  // ...and dragX with it. iOS Photos tracks the finger in BOTH axes once the
-  // dismiss drag has been claimed — the photo goes where your thumb goes, not
-  // just straight down a rail. Sideways motion is pure follow: it never commits
-  // the dismiss on its own (that stays a vertical/velocity decision).
-  const dragX = useRef(new Animated.Value(0)).current;
-  // Photo shrinks toward 0.7 across the first ~55% of a pull — matching the
-  // amount iOS Photos shrinks a photo before it lets go of it.
-  const dragScale = dragY.interpolate({
-    inputRange: [0, height * 0.55],
-    outputRange: [1, 0.7],
-    extrapolate: 'clamp',
-  });
-  // Backdrop fades from solid to clear over the first ~45% of a pull, so the
-  // grid behind reads through as the photo lifts away.
-  const dragBackdropOpacity = dragY.interpolate({
-    inputRange: [0, height * 0.45],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-  // Chrome gets out of the way the moment the photo starts moving (iOS hides
-  // every control for the duration of the drag). Interpolated rather than
-  // state-driven so it costs nothing and reverses for free on a spring-back.
-  const dragChromeOpacity = dragY.interpolate({
-    inputRange: [0, 60],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-
-  // === ORIGIN-ANCHORED OPEN/CLOSE (grid → viewer continuity) ===
-  // The viewer pops FROM the tapped cell's screen position instead of the dead
-  // centre: originDX/DY hold the tap point's offset from screen centre (set at
-  // open), and popProgress rides the existing scaleAnim (0.85 → 1) so the
-  // translate decays to zero exactly as the pop settles. Close reverses
-  // scaleAnim, so the photo retreats toward the same spot. Pure native-driver
-  // math (multiply of a Value by an interpolation) — no measurement pass, no
-  // snapshot layer, and a plain centre pop when no origin is known (origin 0).
-  const originDX = useRef(new Animated.Value(0)).current;
-  const originDY = useRef(new Animated.Value(0)).current;
-  const popProgress = scaleAnim.interpolate({
-    inputRange: [0.85, 1],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-  const originTranslateX = Animated.multiply(originDX, popProgress);
-  const originTranslateY = Animated.multiply(originDY, popProgress);
-  
-  // === DRAWER STATE & PHYSICS ===
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const drawerY = useRef(new Animated.Value(height)).current;
-  // The swipeResponder below is built once (useRef), so its closures freeze the
-  // first render's state. Mirror isDrawerOpen into a ref it can read live —
-  // otherwise it always sees `false` and routes every release to dismiss.
-  const isDrawerOpenRef = useRef(false);
-  useEffect(() => { isDrawerOpenRef.current = isDrawerOpen; }, [isDrawerOpen]);
-
-  const openMetadataDrawer = useCallback(() => {
-    setIsDrawerOpen(true);
-    Animated.spring(drawerY, { toValue: height * 0.45, useNativeDriver: true, tension: 65, friction: 10 }).start();
-  }, [drawerY]);
-
-  const closeMetadataDrawer = useCallback(() => {
-    Animated.timing(drawerY, { toValue: height, duration: 250, easing: Easing.out(Easing.ease), useNativeDriver: true }).start(() => setIsDrawerOpen(false));
-  }, [drawerY]);
-  
   // === ALBUM & TAG STATE ===
   const [globalAlbums, setGlobalAlbums] = useState(['Phone Uploads']);
   const [albumCovers, setAlbumCovers] = useState({});
@@ -1316,33 +1157,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     }
   }, [editingTags, tagInputValue, selectedGridItems, uploadItems, api]);
 
-  const openBulkTagEditor = useCallback(() => {
-    // 1. Calculate common tags across all selected items. Resolve against the
-    // FULL displayed set (prefix + sparse virtual-library pages), not just
-    // `uploadItems` (the prefix) — otherwise photos picked from deep in the
-    // timeline are missed and the editor shows the wrong "common" tags.
-    let commonTags = null;
-    const displayItems = uploadItemsForDragRef.current || [];
-    const byId = new Map();
-    for (const di of displayItems) if (di && di.id && !di.isSkeleton) byId.set(di.id, di);
-    Array.from(selectedGridItems).forEach(id => {
-      const item = byId.get(id);
-      if (item) {
-        const itemTags = tagsOf(item);
-        if (commonTags === null) {
-          commonTags = [...itemTags];
-        } else {
-          // Keep only tags that exist in all selected items
-          commonTags = commonTags.filter(t => itemTags.includes(t));
-        }
-      }
-    });
-    
-    setEditingTags(commonTags || []);
-    setTagInputValue('');
-    setEditTagsVisible(true);
-    Animated.timing(tagFadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-  }, [selectedGridItems, uploadItems, tagFadeAnim]);
   
   // Progress/percentage/minimize/delete-offer UI all moved to the global
   // VaultUploadContext + VaultUploadPill. The gallery's remaining job on
@@ -1358,37 +1172,12 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vaultLifecycle.finishedAt]);
 
-  // Tag editor state
-  // === TAG EDITOR STATE & ANIMATION ===
-  const [editTagsVisible, setEditTagsVisible] = useState(false);
+  // === BULK TAG EDITOR STATE (selection bar) ===
+  // The viewer's own tags live in PhotoViewer's TagsSheet; these back the
+  // select-mode inline editor only.
   const [editingTags, setEditingTags] = useState([]);
   const [tagInputValue, setTagInputValue] = useState('');
-  const tagFadeAnim = useRef(new Animated.Value(0)).current;
 
-  const openTagEditor = useCallback(() => {
-    try { setEditingTags(JSON.parse(selectedMedia.tags || '[]')); } catch(e){ setEditingTags([]); }
-    setTagInputValue('');
-    setEditTagsVisible(true);
-    Animated.timing(tagFadeAnim, {
-      toValue: 1,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  }, [selectedMedia, tagFadeAnim]);
-
-  const closeTagEditor = useCallback(() => {
-    Animated.timing(tagFadeAnim, {
-      toValue: 0,
-      duration: 150,
-      useNativeDriver: true,
-    }).start(() => {
-      setEditTagsVisible(false);
-    });
-  }, [tagFadeAnim]);
-  
-  // Scroll position for parallax effect
-  const scrollX = useRef(new Animated.Value(0)).current;
-  
   // === REFS ===
   // Grid ref for scroll-to-bottom (iOS Photos style)
   const gridRef = useRef(null);
@@ -1819,6 +1608,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   // `viewerSourceItems` (defined below) now matching the grid's rendered set,
   // this should essentially never trigger for a normal tap — it's a safety net.
   const [viewerSoloItem, setViewerSoloItem] = useState(null);
+  // Where the viewer pops from (the tapped cell's point, window coords) and
+  // which index of the viewer list it opens on. Written together with
+  // selectedMedia in openViewer; PhotoViewer reads them when `visible` flips.
+  const [viewerOrigin, setViewerOrigin] = useState(null);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   // NOTE: `viewerItems` (the array the full-screen pager walks) is defined
   // below, AFTER `uploadDisplayItems`, because it derives from it. Defining it
   // here would hit the temporal-dead-zone for that const.
@@ -2624,320 +2418,61 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  // Open full-screen viewer with animation and large file warning. `origin`
-  // (optional) is the tap point in window coords ({x, y}) — the pop then
-  // originates from the tapped cell instead of the screen centre.
+  // Open the full-screen viewer. `origin` (optional) is the tap point in
+  // window coords ({x, y}) — the viewer pops out of that spot instead of the
+  // screen centre. Everything else about opening (the pop, the stores, the
+  // zoom reset) is PhotoViewer's; this only decides WHAT opens, and warns
+  // before a very large file.
   const openViewer = useCallback((item, origin) => {
     // Dev probe: the tap-to-open path is the most latency-visible in the app.
     gestureProbe.respond('grid:openPhoto');
     const executeOpen = () => {
-      // Anchor the pop at the tap point (offset from screen centre). No origin
-      // (e.g. programmatic open) ⇒ 0/0 ⇒ the old centre pop.
-      originDX.setValue(origin ? origin.x - width / 2 : 0);
-      originDY.setValue(origin ? origin.y - height / 2 : 0);
-      // Index into the SAME array the pager walks (and the grid renders), so
+      // Index into the SAME array the viewer walks (and the grid renders), so
       // the tapped photo is found and left/right swipe works across the whole
-      // loaded set. Only fall back to the solo viewer if it's genuinely absent.
+      // loaded set. Only fall back to a solo list if it's genuinely absent.
       // Read via ref (not the closed-over value) so this callback stays STABLE
-      // as the list grows — otherwise its identity changed on every sparse page
-      // land, which changed renderItem and re-rendered every visible grid cell
-      // during scroll (the source of the laggy taps / select delay).
+      // as the list grows — its identity feeds every grid cell's props.
       const index = viewerSourceItemsRef.current.findIndex(i => i.id === item.id);
       setViewerSoloItem(index !== -1 ? null : item);
-      scrollX.setValue(index !== -1 ? index * ITEM_WIDTH : 0);
-
-      // Open at 1x, ALWAYS. zoomScale drives scrollEnabled on the pager, and it
-      // has exactly one writer: a cell reporting its zoom, which is gated on
-      // that cell being ACTIVE. A cell that goes inactive while still zoomed
-      // therefore never reports the way back down - ZoomableView resets itself,
-      // but the shell is never told - and the stale value leaves the pager with
-      // scrollEnabled=false. That is "swiping is completely dead", surviving
-      // until something else happens to zoom. Re-arming here costs nothing and
-      // makes the freeze unreachable: a fresh viewer cannot inherit a zoom.
-      zoomScaleRef.current = 1;
-      setZoomScale(1);
-      zoomChromeAnim.setValue(1);
-
+      setViewerInitialIndex(index !== -1 ? index : 0);
+      setViewerOrigin(origin ? { x: origin.x, y: origin.y } : null);
       setSelectedMedia(item);
-      // Reset and start animations
-      scaleAnim.setValue(0.85);
-      opacityAnim.setValue(0);
-      
-      Animated.parallel([
-        Animated.timing(scaleAnim, {
-          toValue: 1,
-          duration: 200, // 🚀 Faster pop
-          easing: Easing.bezier(0.05, 0.7, 0.1, 1), // 💎 Instant pop, smooth settle
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacityAnim, {
-          toValue: 1,
-          duration: 120, // 🚀 Near-instant background blackout
-          easing: Easing.linear,
-          useNativeDriver: true,
-        }),
-      ]).start();
     };
 
-    const LARGE_FILE_MB = 100; // 100MB threshold
+    const LARGE_FILE_MB = 100;
     const sizeMB = item.size ? item.size / (1024 * 1024) : 0;
-
     if (sizeMB > LARGE_FILE_MB) {
       Alert.alert(
         'Large File Warning',
         `This file is ${sizeMB.toFixed(1)} MB. Loading it may take a moment or use significant memory. Proceed?`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Open', onPress: executeOpen }
-        ]
+          { text: 'Open', onPress: executeOpen },
+        ],
       );
     } else {
       executeOpen();
     }
-  }, [scaleAnim, opacityAnim, scrollX, originDX, originDY]);
+  }, []);
 
-  // Close full-screen viewer.
-  // (A zoom-guard branch used to live here, but `zoomScale` was never written
-  // after init — frozen at 1 — and the branch referenced a `scrollRef` that
-  // only exists inside ImageViewer's scope: a latent ReferenceError shielded
-  // only by the always-false condition. Removed; behavior is identical.)
-  // Tear down viewer state + reset transient anims. Shared by the scale-pop
-  // close and the pull-to-dismiss slide-out so both leave a clean slate.
-  const resetViewerState = useCallback(() => {
+  // PhotoViewer has finished its close animation: drop the viewer state. The
+  // Modal hides on the next render.
+  const handleViewerClosed = useCallback(() => {
+    gestureProbe.respond('viewer:close');
     setSelectedMedia(null);
     setViewerSoloItem(null);
-    setInfoVisible(true);
-    infoOpacityAnim.setValue(1);
-    dragY.setValue(0);
-    dragX.setValue(0);
-    scaleAnim.setValue(0.85);
-    reportZoomScale(1); // fresh viewer session starts unzoomed (guards read this)
-  }, [infoOpacityAnim, dragY, scaleAnim, reportZoomScale]);
+    setViewerOrigin(null);
+  }, []);
 
-  const closeViewer = useCallback(() => {
-    gestureProbe.respond('viewer:close');
-    Animated.parallel([
-      Animated.timing(scaleAnim, {
-        toValue: 0.85,
-        duration: 150, // 🚀 Rapid exit
-        easing: Easing.bezier(0.3, 0.0, 0.8, 0.15), // 💎 Accelerating exit curve
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: 0,
-        duration: 100, // 🚀 Instant background reveal
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-    ]).start(resetViewerState);
-  }, [scaleAnim, opacityAnim, resetViewerState]);
-
-  // Pull-to-dismiss commit. iOS Photos does NOT throw the photo off the bottom
-  // of the screen — it flies it back into the grid thumbnail it came from,
-  // shrinking and fading on the way. That is exactly what the origin-anchored
-  // close already does: as scaleAnim retreats 1 → 0.85, originTranslate pulls
-  // the photo toward the tapped cell. So the dismiss is: unwind the drag offset
-  // and run that same retreat, from wherever the finger let go.
-  const dismissByDrag = useCallback((velocityX = 0, velocityY = 0) => {
-    Animated.parallel([
-      Animated.spring(dragX, {
-        toValue: 0, velocity: velocityX, useNativeDriver: true, tension: 90, friction: 14,
-      }),
-      Animated.spring(dragY, {
-        toValue: 0, velocity: velocityY, useNativeDriver: true, tension: 90, friction: 14,
-      }),
-      Animated.timing(scaleAnim, {
-        toValue: 0.85,
-        duration: 200,
-        easing: Easing.bezier(0.3, 0.0, 0.8, 0.15),
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: 0,
-        duration: 180,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-    ]).start(resetViewerState);
-  }, [dragX, dragY, scaleAnim, opacityAnim, resetViewerState]);
-
-  // Spring the photo home when a pull didn't go far enough to commit. Carries
-  // the release velocity into the spring so a quick flick-and-hold settles the
-  // way iOS does, instead of restarting from zero.
-  const cancelDrag = useCallback((velocityX = 0, velocityY = 0) => {
-    Animated.parallel([
-      Animated.spring(dragX, {
-        toValue: 0, velocity: velocityX, useNativeDriver: true, tension: 80, friction: 12,
-      }),
-      Animated.spring(dragY, {
-        toValue: 0, velocity: velocityY, useNativeDriver: true, tension: 80, friction: 12,
-      }),
-    ]).start();
-  }, [dragX, dragY]);
-
-  // Toggle info visibility on tap - fade out smooth, fade in fast
-  const toggleInfoVisibility = useCallback(() => {
-    const newValue = !infoVisible;
-    setInfoVisible(newValue);
-    
-    if (newValue) {
-      // Fade in fast with bezier easing
-      Animated.timing(infoOpacityAnim, {
-        toValue: 1,
-        duration: 200,
-        easing: Easing.bezier(0.4, 0.0, 0.2, 1),
-        useNativeDriver: true,
-      }).start();
-    } else {
-      // Fade out smoothly
-      Animated.timing(infoOpacityAnim, {
-        toValue: 0,
-        duration: 200,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [infoVisible, infoOpacityAnim]);
-
-  // Stable handle on the toggle for the viewer cells. `toggleInfoVisibility`
-  // takes a new identity on every chrome flip; handing THAT to renderViewerItem
-  // would re-render every mounted pager page each time the chrome is tapped.
-  const toggleInfoRef = useRef(toggleInfoVisibility);
-  toggleInfoRef.current = toggleInfoVisibility;
-
-  // ── Pager-quiet guard for the chrome toggle ───────────────────────────────
-  // A tap that arrives DURING pager motion is never a request to toggle the
-  // chrome: it's a failed swipe, or a finger catching a moving page. Two ways
-  // such a tap still reached the toggle:
-  //   • a flick lifts before the scroll claims the touch, so the tap gesture
-  //     legitimately succeeds at finger-up while the page is about to move;
-  //   • catching a page mid-momentum reads as a clean tap to the recognizer.
-  // Each one flipped the overlay, so a run of quick swipes strobed it on/off.
-  // The gesture-side fix is maxDistance on the tap (ZoomableView); this is the
-  // shell side: the scrollX listener below stamps a quiet window on EVERY
-  // pager scroll frame, so taps are swallowed while the pager moves and for
-  // PAGER_TAP_QUIET_MS after its last frame. Stamping per-frame (rather than
-  // latching between begin/end events) means the guard can never stick shut —
-  // it decays on its own even if a settle event is lost to an unmount.
-  const pagerQuietUntilRef = useRef(0);
-  const handleViewerSingleTap = useCallback(() => {
-    if (pagerDragStore.get()) return;
-    if (Date.now() < pagerQuietUntilRef.current) return;
-    gestureProbe.respond('viewer:chromeToggle');
-    toggleInfoRef.current?.();
-  }, [pagerDragStore]);
-
-  // Unified swipe responder. Three independent gestures handled here:
-  //   • Vertical down on the photo → dismiss the viewer.
-  //   • Vertical up on the photo  → open the metadata drawer.
-  //   • Horizontal right from the LEFT EDGE → iPhone-style swipe-back
-  //     to close the viewer. Matches the system gesture every other
-  //     iOS app responds to when you swipe in from the bezel.
-  //
-  // The edge-back gesture is recognised separately from the vertical
-  // gestures because:
-  //   1. The touch must START within the first ~24px of the screen's
-  //      left edge — anything further in is a normal in-canvas pan.
-  //   2. The drag must be primarily rightward (dx > 8 and dominant
-  //      over dy). This keeps a vertical-then-slightly-right wiggle
-  //      from being misread as a back swipe.
-  // When both conditions hit, we claim the gesture and commit on
-  // release if the user has dragged far enough or fast enough.
-  const EDGE_BACK_ZONE_PX = 24;
-  const EDGE_BACK_COMMIT_DX = 80;
-  const EDGE_BACK_COMMIT_VX = 0.5;
-  const swipeResponder = useRef(
-    PanResponder.create({
-      // Dev probe arm-point. The viewer is a Modal — its own native root — so
-      // the app-level touch sniff in App.js never sees these touches. Capture
-      // phase + `return false`: observe, never claim.
-      onStartShouldSetPanResponderCapture: () => {
-        gestureProbe.touchStart('photo viewer');
-        return false;
-      },
-      // Second half of the dev probe's arm-point, same capture-and-decline
-      // contract: the probe times a swipe from the first MOVE, because a finger
-      // resting on a photo before it travels is dwell, not lag. Capture phase so
-      // it still sees moves after the pager's ScrollView has claimed the
-      // responder — the bubble-phase handler below stops being consulted then.
-      onMoveShouldSetPanResponderCapture: () => {
-        gestureProbe.touchMove();
-        return false;
-      },
-      onMoveShouldSetPanResponder: (evt, gestureState) => {
-        // Read through the refs: this responder is built once, so state read
-        // here would be frozen at the first render's values.
-        if (zoomScaleRef.current > 1.05) return false;
-
-        // Edge-back: touch started near the left bezel + dominant
-        // rightward motion. Take priority over the vertical gestures.
-        const startX = evt.nativeEvent.pageX - gestureState.dx;
-        if (
-          startX < EDGE_BACK_ZONE_PX &&
-          gestureState.dx > 8 &&
-          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.5
-        ) {
-          return true;
-        }
-
-        // Vertical drag for dismiss / drawer — but only when vertical is the
-        // DOMINANT axis. The old factor (dy > dx * 0.5) claimed swipes whose
-        // horizontal travel was twice the vertical, so a slightly diagonal
-        // page-swipe got hijacked: the native pager scroll was cancelled
-        // mid-flight (a visible jump under the finger) and the photo started
-        // dragging toward dismiss instead of paging. iOS resolves this by
-        // dominant axis; the 1.2 bias means a true diagonal stays with the
-        // pager, which is the gesture people mean far more often.
-        return Math.abs(gestureState.dy) > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.2;
-      },
-      onPanResponderMove: (evt, gestureState) => {
-        if (isDrawerOpenRef.current) {
-          // Drawer is up: a downward drag pulls it back toward closed.
-          if (gestureState.dy > 0) drawerY.setValue((height * 0.45) + gestureState.dy);
-          return;
-        }
-        // iOS Photos pull-to-dismiss: the open photo tracks the finger 1:1 in
-        // BOTH axes (dragScale, dragBackdropOpacity and dragChromeOpacity all
-        // react to dragY in the render; dragX is pure follow).
-        if (gestureState.dy > 0) {
-          dragY.setValue(gestureState.dy);
-          dragX.setValue(gestureState.dx);
-        }
-      },
-      onPanResponderRelease: (evt, gestureState) => {
-        // Edge-back commit — checked FIRST so a fast left-edge swipe
-        // closes the viewer cleanly even if the gesture wiggled
-        // vertically partway through.
-        const startX = evt.nativeEvent.pageX - gestureState.dx;
-        if (
-          startX < EDGE_BACK_ZONE_PX &&
-          (gestureState.dx > EDGE_BACK_COMMIT_DX || gestureState.vx > EDGE_BACK_COMMIT_VX)
-        ) {
-          closeViewer();
-          return;
-        }
-
-        if (isDrawerOpenRef.current) {
-          if (gestureState.dy > 50 || gestureState.vy > 1) closeMetadataDrawer();
-          else openMetadataDrawer();
-          return;
-        }
-
-        // Commit the dismiss if pulled far enough OR flicked down fast (iOS
-        // commits around 100px, or on a downward flick from much shorter);
-        // a strong upward swipe opens the metadata drawer; anything short
-        // springs the photo home carrying the release velocity.
-        if (gestureState.dy > 100 || (gestureState.dy > 30 && gestureState.vy > 0.7)) {
-          dismissByDrag(gestureState.vx, gestureState.vy);
-        } else if (gestureState.dy < -50) {
-          cancelDrag(gestureState.vx, gestureState.vy);
-          openMetadataDrawer();
-        } else {
-          cancelDrag(gestureState.vx, gestureState.vy);
-        }
-      },
-    })
-  ).current;
+  // The viewer settled on a page (finger up, animation done): adopt it as the
+  // gallery's selected photo. At rest by construction — the deferred-adoption
+  // machinery that used to live here existed only because the FlatList
+  // settled on gesture frames.
+  const handleViewerIndexSettled = useCallback((item) => {
+    if (!item) return;
+    gestureProbe.mark('viewer:pageSettle');
+    setSelectedMedia((prev) => (prev?.id === item.id ? prev : item));
+  }, []);
 
   // Rename album (updates all photos with the old tag). The name comes from the
   // rename PAGE inside AlbumActionsSheet — this used to be an Alert.prompt,
@@ -3025,8 +2560,9 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   }, []);
 
   // Placeholder for expo-image-manipulator UI integration
-  const openImageEditor = useCallback(() => {
-    if (!selectedMedia || selectedMedia.type === 'video') return;
+  const openImageEditor = useCallback((target) => {
+    const item = target && target.id ? target : selectedMedia;
+    if (!item || item.type === 'video') return;
     Alert.alert(
       "Edit Image",
       "Image Editor coming soon! This will trigger the crop/rotate UI.",
@@ -3279,49 +2815,42 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
       });
   }, [api, selectedAlbum, uploadItems, setSelectedMedia, setUploadItems, setGlobalAlbums]);
 
-  // Optimistic UI Toggle for Quick Favourites
-  const toggleFavourite = useCallback(async () => {
+
+  // Optimistic UI toggle for Quick Favourites. Takes the item explicitly (the
+  // viewer hands over its active page; a bare button press hands an event,
+  // which is ignored) and falls back to the selected photo.
+  const toggleFavourite = useCallback(async (target) => {
     gestureProbe.respond('viewer:favourite');
-    if (!selectedMedia) return;
-    
+    const item = target && target.id ? target : selectedMedia;
+    if (!item) return;
+
     try {
-      const currentTags = JSON.parse(selectedMedia.tags || '[]');
+      const currentTags = JSON.parse(item.tags || '[]');
       const isFav = currentTags.includes('Favourites');
-      
-      // Toggle logic
-      const newTags = isFav 
-        ? currentTags.filter(t => t !== 'Favourites') 
+      const newTags = isFav
+        ? currentTags.filter(t => t !== 'Favourites')
         : [...currentTags, 'Favourites'];
-        
       const newTagsString = JSON.stringify(newTags);
 
-      // 1. Optimistically update the UI instantly
-      setSelectedMedia(prev => ({ ...prev, tags: newTagsString }));
-      
-      const updateItemInList = (prevList) => 
-        prevList.map(item => item.id === selectedMedia.id ? { ...item, tags: newTagsString } : item);
-      
-      setUploadItems(updateItemInList);
-
-      // 2. Add 'Favourites' to global dropdown immediately if it's the first time
+      // 1. Optimistically update the UI instantly — the viewer item, the grid
+      // item, and the album list.
+      setSelectedMedia(prev => (prev && prev.id === item.id ? { ...prev, tags: newTagsString } : prev));
+      setUploadItems(prevList => prevList.map(it => it.id === item.id ? { ...it, tags: newTagsString } : it));
       if (!isFav) {
         setGlobalAlbums(prev => Array.from(new Set([...prev, 'Favourites'])).sort());
       }
 
-      // 3. Send payload to server in the background (handler only reads `tags`)
-      await api.put(`/media/${selectedMedia.id}/tags`, { tags: newTags });
+      // 2. Persist in the background (the handler only reads `tags`).
+      await api.put(`/media/${item.id}/tags`, { tags: newTags });
 
-      // 4. NO full-library refetch — the optimistic updates above already
-      // mirror the server state, and the old `fetchUploads(true)` here reset
-      // the loaded prefix to page 0 on EVERY heart-tap (collapsing scroll
-      // position and re-downloading data). The one case that needs more is
-      // un-favoriting while looking at the Favourites album: the item should
-      // leave the grid — handled surgically.
+      // 3. NO full-library refetch — the optimistic updates above already
+      // mirror the server state. The one case that needs more is
+      // un-favouriting while looking at the Favourites album: the item should
+      // leave the grid.
       if (selectedAlbum === 'Favourites' && isFav) {
-        setUploadItems(prev => prev.filter(item => item.id !== selectedMedia.id));
+        setUploadItems(prev => prev.filter(it => it.id !== item.id));
       }
-
-    } catch(e) {
+    } catch (e) {
       console.error('[MediaGallery] Favourites toggle failed:', e);
     }
   }, [selectedMedia, api, selectedAlbum]);
@@ -3626,12 +3155,13 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   // share could ever be was a multi-hundred-megabyte upload from the phone.
   // The chooser also doubles as the intent signal that starts pulling a
   // photo's original in the background while the options are being read.
-  const handleShare = useCallback(() => {
-    if (!selectedMedia) return;
-    setShareChooser(selectedMedia);
+  const handleShare = useCallback((target) => {
+    const item = target && target.id ? target : selectedMedia;
+    if (!item) return;
+    setShareChooser(item);
     // Videos have no compressed tier to choose between, and their warm-up is
     // already handled by the dwell effect below — no point starting a second.
-    if (selectedMedia.type !== 'video') prefetchFullForShare(selectedMedia);
+    if (item.type !== 'video') prefetchFullForShare(item);
   }, [selectedMedia, prefetchFullForShare]);
 
   // INSTANT-SHEET WARM-UP FOR VIDEOS.
@@ -3789,147 +3319,12 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     </View>
   );
 
-  // Live mirror of selectedMedia (+ the active-id store). The mirror exists so
-  // the pager sync below can hand the freshest item to actions IMMEDIATELY
-  // while the expensive state adoption is deferred; the effect keeps it (and
-  // the store) truthful for every other way selectedMedia changes — open,
-  // close, tag/favourite spreads.
-  const selectedMediaRef = useRef(null);
+  // Keep the active-id store truthful for every way selectedMedia changes
+  // outside the pager (open, close, tag/favourite spreads). PhotoViewer sets
+  // it first at every page settle; this is the same id again, a no-op.
   useEffect(() => {
-    selectedMediaRef.current = selectedMedia;
     viewerActiveStore.set(selectedMedia?.id ?? null);
   }, [selectedMedia, viewerActiveStore]);
-
-  // Adopt whatever the pager last settled on into gallery state. Idempotent —
-  // multiple schedules may fire, latest item wins.
-  //
-  // THE COMMIT ONLY LANDS AT REST. setSelectedMedia re-renders the whole
-  // 6,000-line gallery, and no deferral constant can dodge a human: the old
-  // 400ms belt landed the commit exactly when a natural browsing rhythm
-  // starts the NEXT swipe, which is why swiping still hitched "at times" —
-  // it was timing-dependent, colliding once per settle. So instead of firing
-  // after a fixed delay, adoption checks whether the user is (or moments ago
-  // was) driving the pager — finger down (pagerDragStore, set at raw
-  // touch-start) or inside the per-frame quiet horizon the scroll listener
-  // stamps — and RESCHEDULES itself until both are clear. The pager itself
-  // never waits on this: cells key off the active-id store, which flipped at
-  // settle; only the chrome (filename, meta, sheets) rides behind, and chrome
-  // catching up when the finger rests IS the async-lazy contract. During an
-  // unbroken swipe-run it simply keeps deferring — the run ends, one commit
-  // lands.
-  const adoptRetryRef = useRef(null);
-  const adoptPendingSelected = useCallback(() => {
-    const latest = selectedMediaRef.current;
-    if (!latest) return;
-    if (pagerDragStore.get() || Date.now() < pagerQuietUntilRef.current) {
-      if (adoptRetryRef.current) clearTimeout(adoptRetryRef.current);
-      adoptRetryRef.current = setTimeout(adoptPendingSelected, PAGER_TAP_QUIET_MS);
-      return;
-    }
-    // Dev trail marker. This call only SCHEDULES the whole-gallery re-render —
-    // the cost lands in the commit that follows, which the Profiler above
-    // measures. Logging the schedule is what lets the two be lined up: an
-    // "adopt scheduled" immediately followed by a long `render:gallery update`
-    // is the deferred adoption landing mid-swipe.
-    if (__DEV__) console.log('[probe] adopt scheduled');
-    setSelectedMedia((prev) => (prev?.id === latest.id ? prev : latest));
-  }, [pagerDragStore]);
-  useEffect(() => () => { if (adoptRetryRef.current) clearTimeout(adoptRetryRef.current); }, []);
-
-  // Resolve which photo is centred from a (left-aligned, ITEM_WIDTH-strided)
-  // scroll offset. SINGLE source of truth for "which photo is on screen".
-  //
-  // Split into a CHEAP now and an EXPENSIVE later:
-  //   now   — the active-id store flips (re-renders exactly the two affected
-  //           cells: HD dwell re-arms, video pauses) and selectedMediaRef
-  //           updates, so anything acting on "the current photo" is truthful
-  //           immediately.
-  //   later — setSelectedMedia re-renders the WHOLE gallery (chrome, meta,
-  //           sheets). Running that in the settle frame was the swipe-eating
-  //           stall, so it waits for interactions to finish. The 400ms timeout
-  //           is the starvation belt: InteractionManager can be held off
-  //           indefinitely by chained animations (Animated timings register
-  //           interaction handles by default), and chrome meta lagging beats
-  //           chrome meta never arriving mid-run.
-  const syncSelectedFromOffset = useCallback((offsetX) => {
-    const index = Math.round(offsetX / ITEM_WIDTH);
-    const item = viewerItems[index];
-    if (!item || item.isSkeleton || item.id === viewerActiveStore.get()) return;
-    gestureProbe.mark('viewer:pageSettle');
-    viewerActiveStore.set(item.id);
-    selectedMediaRef.current = item;
-    InteractionManager.runAfterInteractions(adoptPendingSelected);
-    setTimeout(adoptPendingSelected, 400);
-  }, [viewerItems, viewerActiveStore, adoptPendingSelected]);
-
-  // Mirror the live scroll offset into a ref so a drag-end (which fires BEFORE
-  // the snap settles) can read the FINAL resting offset a beat later.
-  const lastViewerOffsetX = useRef(0);
-  useEffect(() => {
-    const id = scrollX.addListener(({ value }) => {
-      lastViewerOffsetX.current = value;
-      // Feed the chrome-toggle guard (see handleViewerSingleTap): any pager
-      // motion pushes the tap-quiet horizon out past this frame.
-      pagerQuietUntilRef.current = Date.now() + PAGER_TAP_QUIET_MS;
-    });
-    return () => scrollX.removeListener(id);
-  }, [scrollX]);
-  const dragSettleTimer = useRef(null);
-
-  // Swipe start/finish bracket the HD stand-down (see pagerDragStore). Cleared
-  // on momentum end AND on the drag-settle path below, because a slow release
-  // snaps without ever producing a momentum phase.
-  const handleScrollBeginDrag = useCallback(() => {
-    // The headline measurement: finger-down → the pager actually starting to
-    // move. When this reads slow, swiping "went dead".
-    gestureProbe.respond('viewer:swipe');
-    pagerDragStore.set(true);
-  }, [pagerDragStore]);
-
-  // FINGER-DOWN, not drag-recognition, is what stands the HD load down.
-  //
-  // onScrollBeginDrag only fires once the ScrollView has DECIDED the touch is a
-  // drag. That decision is itself late when the main thread is busy decoding a
-  // full-resolution image — which is precisely the moment being complained
-  // about ("it lags when the file is mid load for HD"). Cancelling from there
-  // arrives after the damage is done.
-  //
-  // A raw touch fires immediately, before any recognition, so the expensive
-  // work is dropped before it can eat the gesture. Cancelling costs nothing
-  // visible: an uncommitted HD layer is not on screen yet, so reverting to the
-  // fast source changes no pixels, and a LOADED HD texture is never cancelled.
-  const handleTouchStart = useCallback(() => {
-    // A new touch supersedes any pending settle — otherwise a timer armed by
-    // the previous gesture could clear the flag mid-way through this one.
-    if (dragSettleTimer.current) { clearTimeout(dragSettleTimer.current); dragSettleTimer.current = null; }
-    pagerDragStore.set(true);
-  }, [pagerDragStore]);
-
-  const handleMomentumScrollEnd = useCallback((event) => {
-    if (dragSettleTimer.current) { clearTimeout(dragSettleTimer.current); dragSettleTimer.current = null; }
-    pagerDragStore.set(false);
-    syncSelectedFromOffset(event.nativeEvent.contentOffset.x);
-    // The pager just went quiet — drain any HD flags that finished warming
-    // during the swipe, so they apply now instead of waiting for the next one.
-    flushHdMarks();
-  }, [syncSelectedFromOffset, pagerDragStore, flushHdMarks]);
-
-  // THE TAG-MISMATCH FIX: a slow drag-release can snap to the next photo via
-  // snapToInterval WITHOUT any momentum phase, so onMomentumScrollEnd never
-  // fires and selectedMedia would stay on the PREVIOUS photo — then tagging /
-  // favouriting silently hits the wrong pic. onScrollEndDrag fires pre-snap, so
-  // we re-read the settled offset shortly after to adopt the photo that's
-  // actually on screen. (Momentum swipes clear this timer in the handler above.)
-  const handleScrollEndDrag = useCallback(() => {
-    if (dragSettleTimer.current) clearTimeout(dragSettleTimer.current);
-    dragSettleTimer.current = setTimeout(() => {
-      dragSettleTimer.current = null;
-      pagerDragStore.set(false);
-      syncSelectedFromOffset(lastViewerOffsetX.current);
-      flushHdMarks(); // pager quiet — apply any HD that warmed mid-gesture
-    }, 180);
-  }, [syncSelectedFromOffset, pagerDragStore, flushHdMarks]);
-  useEffect(() => () => { if (dragSettleTimer.current) clearTimeout(dragSettleTimer.current); }, []);
 
   // HD warming, driven by where the viewer is parked. This effect is the HD
   // manager's scheduler: it decides WHEN photos warm (active first, ±1
@@ -3966,72 +3361,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     // don't re-fire the prefetch unnecessarily — they change the
     // reference but not the underlying photo.
   }, [selectedMedia?.id, viewerItems, ensureViewerHd]);
-
-  // Render individual viewer item with pinch-to-zoom.
-  //
-  // Deliberately knows NOTHING about which page is active: cells read that
-  // from viewerActiveStore themselves. That keeps this callback (and so every
-  // mounted cell's props) stable across page changes AND across gallery
-  // re-renders — the memoized cells simply never re-render from the parent.
-  const renderViewerItem = useCallback(({ item, index }) => {
-    const isVideo = item.type === 'video';
-    const fullResUrl = getFullUrl(item.rawUrl || item.url || '');
-
-    // NO parallax. iOS Photos moves each page 1:1 with the pager and lets the
-    // gutter do the work. The old 15% counter-translate meant a full-bleed
-    // photo's edge visibly detached from the gutter mid-swipe (a black slice
-    // chasing it inside the clipping mask) — a flourish that read as jank next
-    // to the app being imitated. Removing it also removes a per-page Animated
-    // interpolation from the swipe's hot path.
-    return (
-      // 1. THE OUTER BOUNDARY: screen width + the gutter
-      <View style={styles.viewerItemContainer}>
-
-        {/* 2. THE CLIPPING MASK: bounds the visible area to exactly the screen
-            width so the image can never bleed into the gutter. */}
-        <View style={{ width: width, height: '100%', overflow: 'hidden' }}>
-
-          <View style={{ width: width, height: '100%' }}>
-            {isVideo ? (
-              <FullScreenVideoPlayer sourceUrl={fullResUrl} mediaId={item.id} activeStore={viewerActiveStore} styles={styles} insets={insets} />
-            ) : (
-              <ImageViewer
-                fullResUrl={fullResUrl}
-                mediaId={item.id}
-                activeStore={viewerActiveStore}
-                // The per-photo "HD is warm" flag — the ONLY thing that can
-                // change what a mounted photo cell renders, and the manager
-                // only flips it on quiet frames.
-                hdStore={viewerHdStore}
-                item={item}
-                styles={styles}
-                getFullUrl={getFullUrl}
-                // Zoom reports drive the shell's chrome-hide + pull-dismiss
-                // lockout; the cell itself only speaks when active
-                // (handleZoomedChange gates on its store-derived isActive).
-                onZoomScaleChange={reportZoomScale}
-                // The zoom surface swallows taps, so the chrome toggle has to
-                // be routed through it (it fires only after the double-tap
-                // zoom has been ruled out).
-                onSingleTap={handleViewerSingleTap}
-                // iOS Photos: pinching a fit-to-screen photo in drops back to
-                // the grid.
-                onPinchDismiss={closeViewer}
-              />
-            )}
-          </View>
-
-        </View>
-      </View>
-    );
-  }, [getFullUrl, styles, insets, reportZoomScale, handleViewerSingleTap, closeViewer, viewerActiveStore, viewerHdStore]);
-
-  // Get layout for initialScrollIndex
-  const getItemLayout = useCallback((data, index) => ({
-    length: ITEM_WIDTH,
-    offset: ITEM_WIDTH * index,
-    index,
-  }), []);
 
   // === SMART SYNC GALLERY RENDERER ===
   const renderLocalSyncGallery = () => (
@@ -4081,723 +3410,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
       </SafeAreaView>
     </Modal>
   );
-
-  // Full-screen viewer with swipeable paging
-  // Full-screen viewer with swipeable paging
-  const renderFullScreenViewer = () => {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const [displayMeta, setDisplayMeta] = useState(selectedMedia);
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const metaFadeAnim = useRef(new Animated.Value(1)).current;
-
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useEffect(() => {
-      if (selectedMedia && selectedMedia.id !== displayMeta?.id) {
-        // Fast fade out -> Swap data -> Smooth Bezier fade in
-        Animated.timing(metaFadeAnim, { toValue: 0, duration: 100, useNativeDriver: true }).start(() => {
-          setDisplayMeta(selectedMedia);
-          Animated.timing(metaFadeAnim, { 
-            toValue: 1, duration: 300, easing: Easing.bezier(0.4, 0.0, 0.2, 1), useNativeDriver: true 
-          }).start();
-        });
-      } else if (!selectedMedia) {
-        setDisplayMeta(null);
-      }
-    }, [selectedMedia, displayMeta?.id, metaFadeAnim]);
-
-    if (!selectedMedia) return null;
-    
-    // Fallback while crossfading
-    const activeMeta = displayMeta || selectedMedia;
-
-    // Find the initial index in the SAME array the pager renders
-    // (viewerSourceItems), so initialScrollIndex lands on the tapped photo.
-    // A solo open is a single-item list, so its index is always 0.
-    const initialIndex = viewerSoloItem
-      ? 0
-      : viewerSourceItems.findIndex(item => item.id === selectedMedia.id);
-    const viewerInitialIndex = initialIndex >= 0 ? initialIndex : 0;
-
-    // Render metadata drawer for swipe-up gesture
-    const renderMetadataDrawer = () => {
-      if (!selectedMedia) return null;
-      const activeTags = [];
-      try {
-        const parsed = JSON.parse(selectedMedia.tags || '[]');
-        if (Array.isArray(parsed)) parsed.forEach(t => activeTags.push(t));
-      } catch(e) {}
-
-      const sizeMB = selectedMedia.size ? (selectedMedia.size / (1024 * 1024)).toFixed(2) : 'Unknown';
-
-      return (
-        <Animated.View style={[styles.metadataDrawer, { transform: [{ translateY: drawerY }] }]}>
-          <View style={styles.drawerHandle} />
-          <Text style={[styles.drawerTitle, { color: theme.colors.textPrimary }]}>File Information</Text>
-          <ScrollView style={{ flex: 1, width: '100%' }} showsVerticalScrollIndicator={false}>
-            
-            <View style={styles.infoRow}>
-              <Icon name="file-outline" size={20} color={theme.colors.textSecondary} />
-              <View style={{ marginLeft: 12, flex: 1 }}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Filename</Text>
-                <Text style={{ color: theme.colors.textPrimary, fontSize: 14, fontWeight: '500' }}>{selectedMedia.filename}</Text>
-              </View>
-            </View>
-
-            <View style={styles.infoRow}>
-              <Icon name="harddisk" size={20} color={theme.colors.textSecondary} />
-              <View style={{ marginLeft: 12, flex: 1 }}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Size & Resolution</Text>
-                <Text style={{ color: theme.colors.textPrimary, fontSize: 14, fontWeight: '500' }}>
-                  {sizeMB} MB {selectedMedia.width && `• ${selectedMedia.width}x${selectedMedia.height}`}
-                </Text>
-              </View>
-            </View>
-
-            <Text style={[styles.drawerTitle, { color: theme.colors.textPrimary, marginTop: 24, fontSize: 15 }]}>Tags & Albums</Text>
-            <View style={styles.chipInputContainer}>
-              {activeTags.length > 0 ? activeTags.map((tag, i) => (
-                <View key={i} style={[styles.chip, { backgroundColor: theme.colors.primary }]}>
-                  <Text style={styles.chipText}>{tag}</Text>
-                </View>
-              )) : <Text style={{ color: theme.colors.textMuted }}>No tags assigned</Text>}
-            </View>
-
-          </ScrollView>
-        </Animated.View>
-      );
-    };
-
-    return (
-      <Modal
-        visible={selectedMedia !== null}
-        transparent={true}
-        animationType="none"
-        onRequestClose={closeViewer}
-      >
-        {/* A Modal renders into its own native view tree, OUTSIDE the
-            GestureHandlerRootView at the app root — Gesture Handler needs a
-            root inside it or the photo's pinch/pan/tap gestures silently never
-            fire (Android especially). */}
-        <GestureHandlerRootView style={{ flex: 1 }}>
-        {/* No onPress here — the chrome toggle is owned by the photo cell's
-            gesture surface (ZoomableView routes a single tap only after the
-            double-tap has been ruled out). When this container ALSO toggled on
-            press, a tap fired twice: once on finger-up (here, immediately) and
-            once ~260ms later (the gesture), so the chrome flipped and flipped
-            back — "tapping does nothing" — and the first tap of every
-            double-tap-zoom flashed the chrome for free. */}
-        <Pressable
-          style={styles.viewerContainer}
-          {...swipeResponder.panHandlers}
-        >
-          {/* Status bar folds away with the chrome (iOS Photos): visible while
-              the info layer shows, gone in the immersive state. */}
-          <StatusBar hidden={!infoVisible} animated />
-          {/* Black background — also fades as the photo is pulled down so the
-              grid behind reads through (iOS Photos dismiss). */}
-          <Animated.View
-            style={[
-              styles.viewerBackground,
-              { opacity: Animated.multiply(opacityAnim, dragBackdropOpacity) }
-            ]}
-          />
-          
-          {/* Date/Resolution overlays moved inside ViewerItem for proper positioning */}
-
-          {/* Gradient chrome header (iOS Photos). A soft black-to-transparent
-              wash behind the top controls so white icons stay legible over a
-              bright photo without a hard bar. box-none so taps that miss the
-              back arrow still fall through to the chrome toggle, and it fades
-              with the same opacity the rest of the chrome uses. */}
-          <Animated.View
-            // box-none: only the back button is a target, the rest of the
-            // gradient band passes touches through to the pager. When zoomed
-            // the chrome is faded out (zoomChromeAnim) — 'none' so an
-            // invisible back button can't eat taps/pans.
-            pointerEvents={zoomScale > 1.05 ? 'none' : 'box-none'}
-            style={{
-              position: 'absolute', top: 0, left: 0, right: 0,
-              height: insets.top + 68,
-              // dragChromeOpacity: chrome clears out as soon as a pull-to-
-              // dismiss starts moving the photo, iOS-style.
-              opacity: Animated.multiply(zoomChromeAnim, Animated.multiply(opacityAnim, dragChromeOpacity)),
-              zIndex: 5,
-            }}
-          >
-            <LinearGradient
-              pointerEvents="none"
-              colors={['rgba(0,0,0,0.62)', 'rgba(0,0,0,0.26)', 'transparent']}
-              locations={[0, 0.55, 1]}
-              style={StyleSheet.absoluteFillObject}
-            />
-            <TouchableOpacity
-              onPress={closeViewer}
-              hitSlop={HIT_SLOP_15}
-              activeOpacity={0.6}
-              accessibilityRole="button"
-              accessibilityLabel="Back"
-              style={{
-                position: 'absolute', left: 8, top: insets.top + 6,
-                width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              <Icon name="chevron-left" size={32} color="#fff" style={{ textShadowColor: 'rgba(0,0,0,0.45)', textShadowRadius: 4 }} />
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* Top Right Actions: Edit, Tags */}
-          <Animated.View
-            style={[
-              styles.viewerCloseButton,
-              {
-                zIndex: 6,
-                top: insets.top + 16,
-                opacity: Animated.multiply(zoomChromeAnim, Animated.multiply(opacityAnim, dragChromeOpacity)),
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 20, // Clean spacing between action icons
-                borderRadius: 30,
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-              }
-            ]}
-            // box-none, not 'auto': 'auto' made the WHOLE pill (padding and
-            // the 20px gaps between icons) swallow touches, so a swipe
-            // starting there never reached the pager — one of the overlay
-            // dead zones behind "swiping goes dead". The icons are their own
-            // targets; everything between them scrolls the pager.
-            pointerEvents={zoomScale > 1.05 ? 'none' : 'box-none'}
-          >
-            {/* Only show Edit button for Images, not Videos */}
-            {selectedMedia?.type !== 'video' && (
-              <TouchableOpacity
-                onPress={openImageEditor}
-                hitSlop={HIT_SLOP_15}
-                accessibilityRole="button"
-                accessibilityLabel="Edit image"
-              >
-                <Icon name="pencil" size={26} color="#fff" style={{ textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }} />
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              onPress={openTagEditor}
-              hitSlop={HIT_SLOP_15}
-              accessibilityRole="button"
-              accessibilityLabel="Edit tags"
-            >
-              <Icon name="tag-multiple" size={26} color="#fff" style={{ textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }} />
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* Global Bottom Action Bar (Immune to FlatList Swipes & Pointer Traps) */}
-          <Animated.View 
-            style={[
-              { 
-                position: 'absolute', 
-                left: 24, 
-                right: 24, 
-                // Clears the floating tab card (which reserves no space) rather
-                // than just the safe area.
-                bottom: tabBarH + 20,
-                flexDirection: 'row', 
-                justifyContent: 'space-between', 
-                alignItems: 'flex-end',
-                // Animated.multiply so the bar fades with the IMAGE on close
-                // (opacityAnim→0). infoOpacityAnim alone left the heart/share
-                // lingering after the photo had gone; opacityAnim sits at 1 during
-                // normal viewing so the single-tap info toggle still works.
-                opacity: Animated.multiply(zoomChromeAnim, Animated.multiply(Animated.multiply(opacityAnim, infoOpacityAnim), dragChromeOpacity)),
-                zIndex: 10,
-              }
-            ]}
-            pointerEvents={zoomScale > 1.05 || !infoVisible ? 'none' : 'box-none'} // Disable when zoomed or hidden
-          >
-            {/* Left Side: Date & Resolution (Animated Crossfade) */}
-            <Animated.View style={{ flex: 1, opacity: metaFadeAnim }} pointerEvents="none">
-              <Text style={[styles.viewerInfoDate, { textAlign: 'left', marginBottom: 4 }]} numberOfLines={1}>
-                {activeMeta.originalDate 
-                  ? new Date(activeMeta.originalDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                  : activeMeta.uploadDate 
-                    ? new Date(activeMeta.uploadDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-                    : ''
-                }
-              </Text>
-              {activeMeta.width && activeMeta.height && (
-                <Text style={[styles.viewerInfoResolution, { textAlign: 'left' }]}>
-                  {activeMeta.width} × {activeMeta.height}
-                  {activeMeta.type === 'video' && ' • Video'}
-                </Text>
-              )}
-            </Animated.View>
-            
-            {/* Right Side: Share & Favourites inside a Premium Pill.
-                box-none — the buttons (with their hitSlop) are the targets;
-                the pill's own padding shouldn't be a swipe dead zone. */}
-            <View style={[styles.premiumBezel, { flexDirection: 'row', gap: 20, alignItems: 'center', borderRadius: 30, paddingHorizontal: 20, paddingVertical: 10 }]} pointerEvents="box-none">
-              <TouchableOpacity 
-                onPress={handleShare}
-                hitSlop={HIT_SLOP_20}
-                activeOpacity={0.6}
-              >
-                <Icon name="share-variant" size={28} color="#fff" style={{ textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={toggleFavourite}
-                hitSlop={HIT_SLOP_20}
-                activeOpacity={0.6}
-              >
-                <Icon
-                  name={selectedMedia?.tags?.includes('Favourites') ? "heart" : "heart-outline"}
-                  size={30}
-                  color={selectedMedia?.tags?.includes('Favourites') ? "#ef4444" : "#ffffff"}
-                  style={{ textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }}
-                />
-              </TouchableOpacity>
-            </View>
-
-            {/* Share chooser — a link, or the bytes.
-
-                These are genuinely different things, not two routes to one
-                action, so the sheet names what each one costs. The link is
-                first because it's the cheap one: nothing leaves the phone, the
-                original stays full quality, and a video plays inside the
-                conversation instead of arriving as a blue link.
-
-                Modal portals above the viewer, so where it sits in the tree
-                has no layout effect. */}
-            <Modal
-              visible={!!shareChooser}
-              transparent
-              animationType="fade"
-              onRequestClose={() => setShareChooser(null)}
-            >
-              <Pressable style={styles.shareSheetBackdrop} onPress={() => setShareChooser(null)}>
-                <Pressable style={styles.shareSheetCard} onPress={() => {}}>
-                  <Text style={styles.shareSheetTitle}>
-                    {shareChooser?.type === 'video' ? 'Share video' : 'Share photo'}
-                  </Text>
-
-                  <TouchableOpacity
-                    style={styles.shareSheetOption}
-                    activeOpacity={0.7}
-                    onPress={() => { const m = shareChooser; setShareChooser(null); doShareLink(m); }}
-                  >
-                    <Icon name="link-variant" size={22} color={theme.colors.primary} />
-                    <View style={styles.shareSheetOptionText}>
-                      <Text style={styles.shareSheetOptionTitle}>Send a link</Text>
-                      <Text style={styles.shareSheetOptionSub}>
-                        {shareChooser?.type === 'video'
-                          ? 'Plays right inside iMessage & WhatsApp · nothing uploads'
-                          : 'Shows as a preview card · nothing uploads'}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  {/* A video has no compressed tier to choose between — its
-                      only file option is the original. */}
-                  {shareChooser?.type !== 'video' && (
-                    <TouchableOpacity
-                      style={styles.shareSheetOption}
-                      activeOpacity={0.7}
-                      onPress={() => { const m = shareChooser; setShareChooser(null); doShare(m, 'regular'); }}
-                    >
-                      <Icon name="image-outline" size={22} color={theme.colors.accentInfo} />
-                      <View style={styles.shareSheetOptionText}>
-                        <Text style={styles.shareSheetOptionTitle}>Regular</Text>
-                        <Text style={styles.shareSheetOptionSub}>Smaller file · sends instantly</Text>
-                      </View>
-                    </TouchableOpacity>
-                  )}
-
-                  <TouchableOpacity
-                    style={styles.shareSheetOption}
-                    activeOpacity={0.7}
-                    onPress={() => { const m = shareChooser; setShareChooser(null); doShare(m, 'full'); }}
-                  >
-                    <Icon
-                      name={shareChooser?.type === 'video' ? 'movie-outline' : 'image-size-select-actual'}
-                      size={22}
-                      color={theme.colors.primary}
-                    />
-                    <View style={styles.shareSheetOptionText}>
-                      <Text style={styles.shareSheetOptionTitle}>
-                        {shareChooser?.type === 'video' ? 'Send the file' : 'Full resolution'}
-                      </Text>
-                      <Text style={styles.shareSheetOptionSub}>
-                        {shareChooser?.type === 'video'
-                          ? 'The original itself · uploads from here'
-                          : `Original quality${shareChooser?.width && shareChooser?.height ? ` · ${shareChooser.width}×${shareChooser.height}` : ''}`}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.shareSheetCancel} activeOpacity={0.7} onPress={() => setShareChooser(null)}>
-                    <Text style={styles.shareSheetCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                </Pressable>
-              </Pressable>
-            </Modal>
-
-          </Animated.View>
-
-          {/* ── 3px load-progress bar ────────────────────────────────
-              Pinned just below the iOS safe-area inset at the top of
-              the viewer. Tracks Layer 2 (high-res) bytes-in-flight for
-              the currently active photo. Animates via translateX of a
-              full-width inner bar clipped by an overflow:hidden parent
-              — this lets the animation stay on the native driver
-              (translateX is GPU-cheap; animating `width` would force
-              a layout pass per frame).
-              pointerEvents='none' so it never intercepts the viewer's
-              tap-to-toggle-info gesture. */}
-          <Animated.View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: insets.top,
-              left: 0,
-              right: 0,
-              height: 3,
-              backgroundColor: 'rgba(255,255,255,0.10)',
-              overflow: 'hidden',
-              zIndex: 1000,
-              opacity: viewerProgressOpacityAnim,
-            }}
-          >
-            {/* Filled portion — solid white. The translateX driven by
-                viewerProgressAnim slides the full-width bar in from
-                the left as the load progresses: progress=0 → fully
-                off-screen, progress=1 → flush with the track. That
-                slide IS the only animation on the bar. No gradient,
-                no shimmer, no extra decoration. */}
-            <Animated.View
-              style={{
-                height: 3,
-                width: '100%',
-                backgroundColor: 'rgba(255,255,255,0.95)',
-                transform: [{
-                  translateX: viewerProgressAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [-width, 0],
-                  }),
-                }],
-              }}
-            />
-          </Animated.View>
-
-          {/* Horizontal swipeable FlatList wrapped in GPU-bound Animated.View */}
-          <Animated.View
-            style={[
-              styles.viewerFlatListContainer,
-              {
-                transform: [
-                  // Origin-anchored pop: translate decays to 0 as scaleAnim
-                  // settles, so open grows OUT of the tapped cell and close
-                  // retreats back toward it. dragY stacks on top for the
-                  // pull-to-dismiss track.
-                  { translateX: Animated.add(dragX, originTranslateX) },
-                  { translateY: Animated.add(dragY, originTranslateY) },
-                  { scale: Animated.multiply(scaleAnim, dragScale) },
-                ],
-                opacity: opacityAnim,
-              },
-            ]}
-          >
-            <DevProfiler id="viewerPager">
-            <Animated.FlatList
-              data={viewerItems}
-              renderItem={renderViewerItem}
-              keyExtractor={(item) => item.id}
-              horizontal={true}
-              showsHorizontalScrollIndicator={false}
-              // Freeze paging while the photo is zoomed: a zoomed photo's
-              // horizontal drag belongs to the photo. Keyed off the settled
-              // zoom state ONLY — toggling this mid-gesture cancels an in-flight
-              // native scroll, which is a visible jump under the fingers.
-              scrollEnabled={zoomScale <= 1.05}
-
-              // --- 🛑 STRICT 1-ITEM SWIPE PHYSICS 🛑 ---
-              pagingEnabled={false} // CRITICAL: Turn off native paging because we have a 4px gap
-              snapToInterval={ITEM_WIDTH} // Snap exactly to our custom width + gap
-              // START (not center): every other piece of the paging math —
-              // getItemLayout (offset = ITEM_WIDTH*index), scrollX.setValue on
-              // open, the parallax inputRange, and handleMomentumScrollEnd's
-              // round(offset/ITEM_WIDTH) — assumes LEFT-aligned offsets. With
-              // "center" the list settled half-a-GAP off those positions, so
-              // the image rested off-centre and the index/parallax were
-              // miscalibrated (the "doesn't centre properly" bug). "start"
-              // keeps the entire model consistent → the image rests dead-centre.
-              snapToAlignment="start"
-              disableIntervalMomentum={true} // MAGIC BULLET: Prevents momentum from skipping past the next adjacent item
-              decelerationRate="fast" // Snaps instantly instead of drifting slowly
-              // ----------------------------------------
-              
-              initialNumToRender={3}
-              // 3, not 5: each mounted cell holds a full-screen texture, and
-              // ±2 pages of standby textures bought nothing the ±1 prefetch
-              // cache doesn't — while costing native memory and making every
-              // store broadcast fan wider. ±1 is exactly what a single swipe
-              // can reach.
-              windowSize={3}
-              maxToRenderPerBatch={3}
-              removeClippedSubviews={false}
-              getItemLayout={getItemLayout}
-              initialScrollIndex={viewerInitialIndex}
-              onScroll={Animated.event(
-                [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-                { useNativeDriver: true }
-              )}
-              scrollEventThrottle={16}
-              // Touch-down suppresses the HD load before the pager has even
-              // decided this is a drag; touch-end hands it back through the
-              // SAME settle path a drag uses, so a fling that is still
-              // travelling after the finger lifts stays suppressed until it
-              // lands (onMomentumScrollEnd clears sooner when there is a
-              // momentum phase at all).
-              onTouchStart={handleTouchStart}
-              onTouchEnd={handleScrollEndDrag}
-              onTouchCancel={handleScrollEndDrag}
-              onScrollBeginDrag={handleScrollBeginDrag}
-              onMomentumScrollEnd={handleMomentumScrollEnd}
-              onScrollEndDrag={handleScrollEndDrag}
-            />
-            </DevProfiler>
-          </Animated.View>
-
-
-
-          {/* Inline Tag Editor Overlay (Animated & Chip UI) */}
-          {editTagsVisible && (
-            <Animated.View style={[StyleSheet.absoluteFillObject, { zIndex: 100, opacity: tagFadeAnim }]}>
-              {/* Background Dismiss Handler - closes modal and dismisses keyboard */}
-              <Pressable 
-                style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.7)' }]}
-                onPress={() => {
-                  Keyboard.dismiss();
-                  closeTagEditor();
-                }}
-              >
-                {/* Keyboard avoidance: for a vertically-centered card, the KAV's
-                    padding/height shrinks the area so the card re-centers in the
-                    space ABOVE the keyboard (lifts ~half the keyboard height),
-                    riding the OS keyboard curve. Fixes the card being half-covered. */}
-                <KeyboardAvoidingView
-                  style={{ flex: 1 }}
-                  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                >
-                {/* Scrollable Modal Container - adjusts for keyboard */}
-                <ScrollView
-                  contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}
-                  keyboardShouldPersistTaps="handled"
-                  keyboardDismissMode="on-drag"
-                >
-                  {/* Inner Modal Container - intercepts touches so background doesn't trigger */}
-                  <Pressable 
-                    style={[styles.uploadModalContent, { backgroundColor: theme.colors.surfaceElevated, width: width * 0.9, maxHeight: height * 0.8 }]}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      Keyboard.dismiss();
-                    }}
-                  >
-                    {/* Modal Header */}
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <Text style={[styles.uploadModalTitle, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Edit Tags</Text>
-                      <TouchableOpacity onPress={closeTagEditor} style={{ padding: 4 }}>
-                        <Icon name="close" size={24} color={theme.colors.textSecondary} />
-                      </TouchableOpacity>
-                    </View>
-                    
-                    <Text style={[styles.uploadModalLabel, { color: theme.colors.textSecondary }]}>Assigned Tags:</Text>
-                  
-                    {/* Dynamic Chip Input Box */}
-                    <View style={[styles.chipInputContainer, { borderColor: theme.colors.border }]}>
-                    {editingTags.map((tag, index) => (
-                      <View key={index} style={[styles.chip, { backgroundColor: theme.colors.primary }]}>
-                        <Text style={styles.chipText}>{tag}</Text>
-                        <TouchableOpacity onPress={() => setEditingTags(prev => prev.filter((_, i) => i !== index))}>
-                          <Icon name="close-circle" size={16} color={theme.colors.background} />
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                    <TextInput
-                      style={[styles.chipTextInput, { color: theme.colors.textPrimary }]}
-                      value={tagInputValue}
-                      onChangeText={(text) => {
-                        // Auto-box when a comma is typed
-                        if (text.includes(',')) {
-                          const newTags = text.split(',').map(t => t.trim()).filter(Boolean);
-                          if (newTags.length > 0) {
-                            setEditingTags(prev => Array.from(new Set([...prev, ...newTags])));
-                          }
-                          setTagInputValue('');
-                        } else {
-                          setTagInputValue(text);
-                        }
-                      }}
-                      onKeyPress={({ nativeEvent }) => {
-                        // Backspace deletes the last chip if input is empty
-                        if (nativeEvent.key === 'Backspace' && tagInputValue === '' && editingTags.length > 0) {
-                          setEditingTags(prev => prev.slice(0, -1));
-                        }
-                      }}
-                      onSubmitEditing={() => {
-                        // Submit with return key adds the tag
-                        if (tagInputValue.trim()) {
-                          setEditingTags(prev => Array.from(new Set([...prev, tagInputValue.trim()])));
-                          setTagInputValue('');
-                        }
-                        Keyboard.dismiss();
-                      }}
-                      placeholder={editingTags.length === 0 ? "Type tags, comma or return to add..." : ""}
-                      placeholderTextColor={theme.colors.textMuted}
-                      autoCapitalize="words"
-                      returnKeyType="done"
-                      blurOnSubmit={true}
-                    />
-                  </View>
-
-                  {/* Autocomplete suggestions - show matching tags with active ones pinned to front */}
-                  {tagInputValue.length > 0 && (
-                    <View style={styles.tagAutocompleteContainer}>
-                      <Text style={[styles.tagAutocompleteLabel, { color: theme.colors.textMuted }]}>
-                        Matching tags:
-                      </Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={styles.tagAutocompleteScroll}>
-                        {pinnedAlbums
-                          .filter(album => album.toLowerCase().includes(tagInputValue.toLowerCase()))
-                          .sort((a, b) => {
-                            // Pin active tags to the front
-                            const aActive = editingTags.includes(a);
-                            const bActive = editingTags.includes(b);
-                            if (aActive && !bActive) return -1;
-                            if (!aActive && bActive) return 1;
-                            return a.localeCompare(b);
-                          })
-                          .map(album => (
-                            <TouchableOpacity
-                              key={album}
-                              activeOpacity={0.6}
-                              style={[
-                                styles.tagAutocompleteChip,
-                                editingTags.includes(album) && { backgroundColor: theme.colors.primary }
-                              ]}
-                              onPress={() => {
-                                // Functional + idempotent: a stale closure or a
-                                // rapid double-tap can't duplicate the tag.
-                                setEditingTags(prev => prev.includes(album) ? prev : [...prev, album]);
-                                setTagInputValue('');
-                              }}
-                            >
-                              <Text style={[
-                                styles.tagAutocompleteChipText,
-                                editingTags.includes(album) && { color: theme.colors.background }
-                              ]}>
-                                {album}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                      </ScrollView>
-                    </View>
-                  )}
-
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={styles.quickSelectScroll}>
-                    {pinnedAlbums.map(album => (
-                      <TouchableOpacity
-                        key={album}
-                        style={[styles.quickSelectChip, editingTags.includes(album) && { backgroundColor: theme.colors.primary }]}
-                        onPress={() => {
-                          // Functional toggle: atomic + dedup-safe under lag.
-                          setEditingTags(prev => prev.includes(album) ? prev.filter(t => t !== album) : [...prev, album]);
-                        }}
-                      >
-                        <Text style={[styles.quickSelectText, editingTags.includes(album) && { color: theme.colors.background }]}>{album}</Text>
-                      </TouchableOpacity>
-                    ))}
-                </ScrollView>
-                
-                  <View style={styles.uploadModalButtons}>
-                    <TouchableOpacity 
-                      style={[styles.uploadModalButton, { backgroundColor: theme.colors.surface }]}
-                      onPress={closeTagEditor}
-                    >
-                      <Text style={{ color: theme.colors.textPrimary }}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.uploadModalButton, { backgroundColor: theme.colors.primary }]}
-                      onPress={() => {
-                        // Resolve the tag set (chips + whatever's still typed),
-                        // then close the editor INSTANTLY. Persistence runs in
-                        // the background via the optimistic commit helpers.
-                        let finalTags = [...editingTags];
-                        if (tagInputValue.trim()) finalTags.push(tagInputValue.trim());
-                        finalTags = Array.from(new Set(finalTags));
-
-                        closeTagEditor();
-                        if (isSelectMode) {
-                          executeBulkTagSave(finalTags);
-                        } else if (selectedMedia) {
-                          commitTags(selectedMedia.id, finalTags);
-                        }
-                      }}
-                    >
-                      <Text style={{ color: theme.colors.background, fontWeight: 'bold' }}>Save</Text>
-                    </TouchableOpacity>
-                  </View>
-                </Pressable>
-                </ScrollView>
-                </KeyboardAvoidingView>
-              </Pressable>
-            </Animated.View>
-          )}
-
-          {/* iOS-style Metadata Drawer */}
-          {renderMetadataDrawer()}
-
-          {/* "Gathering data" overlay while the original downloads, then the OS
-              share sheet takes over.
-
-              IN-TREE View, NOT a Modal — and a direct child of the viewer, not
-              of the (absolutely positioned, chrome-faded) bottom action bar. A
-              second Modal over the open viewer Modal is the documented iOS
-              trap: dismiss it and present UIActivityViewController in the same
-              tick and the share sheet silently never appears. Videos hit that
-              EVERY time — they skip the quality chooser, so their download is
-              always still in flight when the sheet is asked for. That was the
-              "sharing a video never prompts" bug. */}
-          {sharePreparing && (
-            // Pressable, not View: an in-tree overlay's taps would otherwise
-            // bubble to the viewer's own tap handler (toggle chrome / dismiss)
-            // underneath it. The Modal used to swallow them for us.
-            <Pressable
-              onPress={() => {}}
-              style={[StyleSheet.absoluteFillObject, styles.sharePreparingBackdrop, { zIndex: 300 }]}
-              testID="share-preparing-overlay"
-            >
-              <View style={styles.sharePreparingCard}>
-                <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={styles.sharePreparingText}>
-                  {sharePrepLabel || 'Preparing full-resolution image…'}
-                  {shareProgress != null ? `  ${Math.round(shareProgress * 100)}%` : ''}
-                </Text>
-                {!!shareCancelRef.current && (
-                  <TouchableOpacity
-                    onPress={() => { const c = shareCancelRef.current; shareCancelRef.current = null; c?.(); }}
-                    activeOpacity={0.7}
-                    hitSlop={HIT_SLOP_20}
-                  >
-                    <Text style={styles.shareSheetCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </Pressable>
-          )}
-        </Pressable>
-        </GestureHandlerRootView>
-      </Modal>
-    );
-  };
 
   // === NATIVE 1:1 SWIPE PAGINATION & UNDERLINE INDICATOR ===
   const tabWidth = (width - 32) / 2;
@@ -4917,7 +3529,151 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     <DevProfiler id="gallery">
     <View style={styles.container}>
       {/* Full-screen viewer & Modals */}
-      <DevProfiler id="viewer">{renderFullScreenViewer()}</DevProfiler>
+      <DevProfiler id="viewer">
+        <PhotoViewer
+          visible={selectedMedia !== null}
+          items={viewerItems}
+          initialIndex={viewerInitialIndex}
+          origin={viewerOrigin}
+          activeStore={viewerActiveStore}
+          hdStore={viewerHdStore}
+          dragStore={pagerDragStore}
+          getFullUrl={getFullUrl}
+          tagSuggestions={globalAlbums}
+          onIndexSettled={handleViewerIndexSettled}
+          onCommitTags={commitTags}
+          onToggleFavourite={toggleFavourite}
+          onShare={handleShare}
+          onEditImage={openImageEditor}
+          onClosed={handleViewerClosed}
+          theme={theme}
+          insets={insets}
+          bottomInset={tabBarH + 20}
+        >
+          {/* MediaGallery-owned overlays that must live INSIDE the viewer's
+              Modal (a sibling Modal over an open one silently fails on iOS). */}
+          {/* Share chooser — a link, or the bytes.
+
+              These are genuinely different things, not two routes to one
+              action, so the sheet names what each one costs. The link is
+              first because it's the cheap one: nothing leaves the phone, the
+              original stays full quality, and a video plays inside the
+              conversation instead of arriving as a blue link.
+
+              Modal portals above the viewer, so where it sits in the tree
+              has no layout effect. */}
+          <Modal
+            visible={!!shareChooser}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShareChooser(null)}
+          >
+            <Pressable style={styles.shareSheetBackdrop} onPress={() => setShareChooser(null)}>
+              <Pressable style={styles.shareSheetCard} onPress={() => {}}>
+                <Text style={styles.shareSheetTitle}>
+                  {shareChooser?.type === 'video' ? 'Share video' : 'Share photo'}
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.shareSheetOption}
+                  activeOpacity={0.7}
+                  onPress={() => { const m = shareChooser; setShareChooser(null); doShareLink(m); }}
+                >
+                  <Icon name="link-variant" size={22} color={theme.colors.primary} />
+                  <View style={styles.shareSheetOptionText}>
+                    <Text style={styles.shareSheetOptionTitle}>Send a link</Text>
+                    <Text style={styles.shareSheetOptionSub}>
+                      {shareChooser?.type === 'video'
+                        ? 'Plays right inside iMessage & WhatsApp · nothing uploads'
+                        : 'Shows as a preview card · nothing uploads'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* A video has no compressed tier to choose between — its
+                    only file option is the original. */}
+                {shareChooser?.type !== 'video' && (
+                  <TouchableOpacity
+                    style={styles.shareSheetOption}
+                    activeOpacity={0.7}
+                    onPress={() => { const m = shareChooser; setShareChooser(null); doShare(m, 'regular'); }}
+                  >
+                    <Icon name="image-outline" size={22} color={theme.colors.accentInfo} />
+                    <View style={styles.shareSheetOptionText}>
+                      <Text style={styles.shareSheetOptionTitle}>Regular</Text>
+                      <Text style={styles.shareSheetOptionSub}>Smaller file · sends instantly</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={styles.shareSheetOption}
+                  activeOpacity={0.7}
+                  onPress={() => { const m = shareChooser; setShareChooser(null); doShare(m, 'full'); }}
+                >
+                  <Icon
+                    name={shareChooser?.type === 'video' ? 'movie-outline' : 'image-size-select-actual'}
+                    size={22}
+                    color={theme.colors.primary}
+                  />
+                  <View style={styles.shareSheetOptionText}>
+                    <Text style={styles.shareSheetOptionTitle}>
+                      {shareChooser?.type === 'video' ? 'Send the file' : 'Full resolution'}
+                    </Text>
+                    <Text style={styles.shareSheetOptionSub}>
+                      {shareChooser?.type === 'video'
+                        ? 'The original itself · uploads from here'
+                        : `Original quality${shareChooser?.width && shareChooser?.height ? ` · ${shareChooser.width}×${shareChooser.height}` : ''}`}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.shareSheetCancel} activeOpacity={0.7} onPress={() => setShareChooser(null)}>
+                  <Text style={styles.shareSheetCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </Modal>
+          {/* "Gathering data" overlay while the original downloads, then the OS
+              share sheet takes over.
+
+              IN-TREE View, NOT a Modal — and a direct child of the viewer, not
+              of the (absolutely positioned, chrome-faded) bottom action bar. A
+              second Modal over the open viewer Modal is the documented iOS
+              trap: dismiss it and present UIActivityViewController in the same
+              tick and the share sheet silently never appears. Videos hit that
+              EVERY time — they skip the quality chooser, so their download is
+              always still in flight when the sheet is asked for. That was the
+              "sharing a video never prompts" bug. */}
+          {sharePreparing && (
+            // Pressable, not View: an in-tree overlay's taps would otherwise
+            // bubble to the viewer's own tap handler (toggle chrome / dismiss)
+            // underneath it. The Modal used to swallow them for us.
+            <Pressable
+              onPress={() => {}}
+              style={[StyleSheet.absoluteFillObject, styles.sharePreparingBackdrop, { zIndex: 300 }]}
+              testID="share-preparing-overlay"
+            >
+              <View style={styles.sharePreparingCard}>
+                <ActivityIndicator size="large" color={theme.colors.primary} />
+                <Text style={styles.sharePreparingText}>
+                  {sharePrepLabel || 'Preparing full-resolution image…'}
+                  {shareProgress != null ? `  ${Math.round(shareProgress * 100)}%` : ''}
+                </Text>
+                {!!shareCancelRef.current && (
+                  <TouchableOpacity
+                    onPress={() => { const c = shareCancelRef.current; shareCancelRef.current = null; c?.(); }}
+                    activeOpacity={0.7}
+                    hitSlop={HIT_SLOP_20}
+                  >
+                    <Text style={styles.shareSheetCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </Pressable>
+          )}
+        </PhotoViewer>
+      </DevProfiler>
       {renderLocalSyncGallery()}
 
       {/* Same gather overlay, grid side. The viewer's copy lives inside the
@@ -6715,16 +5471,6 @@ const createStyles = (theme) =>
       color: theme.colors.textPrimary,
       fontWeight: '500',
     },
-    premiumBezel: {
-      backgroundColor: 'rgba(30, 30, 32, 0.85)',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(255, 255, 255, 0.15)',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.3,
-      shadowRadius: 8,
-      elevation: 5,
-    },
     // Like premiumBezel but THEME-AWARE — for floating chrome that sits over the
     // app's own surface (the grid), not over a photo. The dark premiumBezel is
     // correct over images (white icons), but unreadable in light mode over the
@@ -6955,78 +5701,9 @@ const createStyles = (theme) =>
       // Search container styles applied inline
     },
     // Full-screen viewer styles
-    viewerContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    viewerBackground: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: '#000',
-    },
-    viewerCloseButton: {
-      position: 'absolute',
-      right: 16,
-      zIndex: 10,
-    },
 
-    viewerFlatListContainer: {
-      width: width,
-      height: height * 0.85,
-    },
-    viewerItemContainer: {
-      width: width + GAP,
-      height: height * 0.85,
-      justifyContent: 'center',
-      // flex-start (not center): the cell is GAP px wider than the screen so
-      // the trailing GAP becomes the separation between photos. Centering the
-      // screen-width content inside the wider cell pushed every image GAP/2 px
-      // to the right (and clipped its right edge) once the list snaps to the
-      // left-aligned ITEM_WIDTH*index offset. Left-align so the visible
-      // viewport [0, width] maps exactly onto the image — dead-centre on screen.
-      alignItems: 'flex-start',
-    },
     // (viewerScrollContent lived here for the old zoom ScrollView's
     // contentContainer. ZoomableView transforms in place, so it is gone.)
-    viewerImage: {
-      width: width,
-      height: height * 0.85,
-    },
-    viewerVideo: {
-      width: width,
-      height: height * 0.85,
-    },
-    viewerVideoContainer: {
-      width: width,
-      height: height * 0.85,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    viewerInfoDate: {
-      color: 'rgba(255,255,255,0.5)',
-      fontSize: 14,
-      fontWeight: '300',
-      textAlign: 'center',
-      letterSpacing: 0.5,
-    },
-    viewerInfoResolution: {
-      color: 'rgba(255,255,255,0.8)',
-      fontSize: 12,
-      fontWeight: '300',
-      textAlign: 'center',
-      letterSpacing: 0.5,
-    },
-    muteButton: {
-      position: 'absolute',
-      bottom: 20,
-      right: 20,
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
     // Upload modal styles
     uploadModalOverlay: {
       flex: 1,
@@ -7216,38 +5893,4 @@ const createStyles = (theme) =>
       maxHeight: 40,
     },
     // Metadata Drawer Styles
-    metadataDrawer: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      height: height * 0.55,
-      backgroundColor: theme.mode === 'dark' ? 'rgba(30, 30, 32, 0.95)' : 'rgba(252, 252, 255, 0.98)',
-      borderTopLeftRadius: 24,
-      borderTopRightRadius: 24,
-      paddingHorizontal: 20,
-      paddingTop: 12,
-      paddingBottom: 34,
-      zIndex: 100,
-    },
-    drawerHandle: {
-      width: 40,
-      height: 5,
-      borderRadius: 3,
-      backgroundColor: theme.colors.border,
-      alignSelf: 'center',
-      marginBottom: 16,
-    },
-    drawerTitle: {
-      fontSize: 18,
-      fontWeight: '700',
-      marginBottom: 16,
-    },
-    infoRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.colors.border,
-    },
   });
