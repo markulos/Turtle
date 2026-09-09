@@ -13,6 +13,9 @@ export async function streamMultipartUpload({
   label,
   onProgress,
   signal,
+  // ({ phase, idleMs, attempt }) — called when the watchdog cancels a task,
+  // so the caller can log it as a pipeline anomaly.
+  onAnomaly,
 }) {
   const cancelledError = () => new Error('Upload cancelled');
   if (signal?.aborted) throw cancelledError();
@@ -88,6 +91,7 @@ export async function streamMultipartUpload({
             console.warn(
               `[VaultUpload] ⏱ ${label} · watchdog tripped during ${phase} (idle ${Math.round(idleMs / 1000)}s)`
             );
+            try { onAnomaly?.({ phase, idleMs: Math.round(idleMs), attempt }); } catch { /* never throw from a timer */ }
             task.cancelAsync().catch(() => {});
             settle(
               reject,

@@ -34,6 +34,7 @@ import { useServer } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { notifyUploadComplete, updateUploadProgress, clearUploadProgress } from '../services/uploadNotify';
 import { streamMultipartUpload } from '../services/streamMultipartUpload';
+import { reportUploadIssue } from '../services/uploadDiagnostics';
 import { notifyHaptic } from '../utils/haptics';
 
 // Split into three contexts so a consumer only re-renders on the slice it
@@ -78,6 +79,18 @@ const TERMINAL = new Set(['uploaded', 'duplicate', 'failed', 'missing']);
 // nothing is lost.
 const FOREGROUND_CONCURRENCY = 2;
 const BACKGROUND_FANOUT = 8;
+// RECONCILE. A task whose bytes finished while the app slept may never hand
+// its completion back to JavaScript (seen on device: "stuck at 99 %" after
+// returning). So on every foreground — and on a slow tick while uploading —
+// the pond is asked which in-flight items it already HAS (the same
+// name+size / stem+capture-time fingerprint the pre-check uses): those are
+// marked uploaded and their dangling tasks cancelled; an item in flight far
+// too long with no progress is re-queued once. Every outcome is logged and
+// filed as a feedback note (services/uploadDiagnostics).
+const RECONCILE_MIN_INFLIGHT_MS = 20 * 1000;
+const RECONCILE_STALE_MS = 4 * 60 * 1000;
+const RECONCILE_TICK_MS = 45 * 1000;
+const MAX_ITEM_RETRIES = 2;
 
 // Tally a batch's item outcomes. Module-scope + pure (reads only its arg +
 // TERMINAL) so both the publisher and the OS-notification driver can call it.
@@ -117,9 +130,12 @@ export function VaultUploadProvider({ children }) {
   // = 100): pctOf divides by 100, so the sum is "items' worth of progress".
   const currentPctRef = useRef(0);
   const itemPctRef = useRef(new Map()); // item key → its own %
+  const itemProgressAtRef = useRef(new Map()); // item key → last progress time
+  const itemAbortRef = useRef(new Map()); // item key → its own AbortController
   // The pool's "re-evaluate now" hook: the AppState listener pulls it when the
   // app backgrounds so the fan-out starts immediately, not at the next settle.
   const wakePoolRef = useRef(null);
+  const diagCtx = () => ({ getBaseUrl: getBaseUrlRef.current, token: authRef.current.token });
   const [snapshot, setSnapshot] = useState(null);
   const lastShownPctRef = useRef(-1);
   // Pill visibility. `hidden` collapses the floating pill during an upload
@@ -308,8 +324,12 @@ export function VaultUploadProvider({ children }) {
     // The worker is single-flight, so any item still marked in-flight at entry
     // is a leftover from a run that died (kill, crash): back to pending. The
     // pre-check below skips it if its bytes already landed.
-    for (const it of batch.items) if (it.status === 'inflight') { it.status = 'pending'; delete it.inflightAt; }
+    let leftovers = 0;
+    for (const it of batch.items) if (it.status === 'inflight') { it.status = 'pending'; delete it.inflightAt; leftovers += 1; }
+    if (leftovers) reportUploadIssue('inflight-leftover-at-start', { count: leftovers, batch: batch.id }, diagCtx());
     itemPctRef.current.clear();
+    itemProgressAtRef.current.clear();
+    itemAbortRef.current.clear();
     currentPctRef.current = 0;
     publish();
 
@@ -469,36 +489,62 @@ export function VaultUploadProvider({ children }) {
           // the batch-level figure is the SUM over the pool.
           let itemPct = 0;
           itemPctRef.current.set(item.key, 0);
+          itemProgressAtRef.current.set(item.key, Date.now());
           const onProgress = (pct) => {
             if (pct <= itemPct) return;
             itemPct = pct;
             itemPctRef.current.set(item.key, pct);
+            itemProgressAtRef.current.set(item.key, Date.now());
             let sum = 0;
             for (const v of itemPctRef.current.values()) sum += v;
             currentPctRef.current = sum;
             publishPctTick();
           };
 
-          await streamMultipartUpload({
-            url: uploadEndpoint,
-            fileUri: mediaUri,
-            mimeType: mediaType,
-            parameters,
-            token: batch.token,
-            label: mediaName,
-            onProgress,
-            signal: batch.abortController.signal,
-          });
+          // Per-item cancellation (reconcile), chained to the batch's abort.
+          const itemAbort = new AbortController();
+          const onBatchAbort = () => itemAbort.abort();
+          batch.abortController.signal.addEventListener('abort', onBatchAbort, { once: true });
+          itemAbortRef.current.set(item.key, itemAbort);
+          try {
+            await streamMultipartUpload({
+              url: uploadEndpoint,
+              fileUri: mediaUri,
+              mimeType: mediaType,
+              parameters,
+              token: batch.token,
+              label: mediaName,
+              onProgress,
+              signal: itemAbort.signal,
+              onAnomaly: (a) => reportUploadIssue(`watchdog-${a.phase}`, { ...a, item: mediaName }, diagCtx()),
+            });
+          } finally {
+            batch.abortController.signal.removeEventListener('abort', onBatchAbort);
+            itemAbortRef.current.delete(item.key);
+          }
           if (!isCurrentBatch()) return;
           item.status = 'uploaded';
           item.meta = null; // terminal — release the retained graph as we go
         } catch (error) {
           if (!isCurrentBatch()) return;
-          console.error(`[VaultUpload] Failed ${item.fileName || item.key}:`, error.message);
-          item.status = 'failed';
-          item.meta = null; // terminal — release
+          const verdict = item.reconcile;
+          delete item.reconcile;
+          if (verdict === 'landed') {
+            // The pond already has it; the task's completion never came back.
+            item.status = 'uploaded';
+            item.meta = null;
+          } else if (verdict === 'retry' && (item.retries || 0) < MAX_ITEM_RETRIES) {
+            item.retries = (item.retries || 0) + 1;
+            item.status = 'pending'; // the pool picks it up again
+          } else {
+            console.error(`[VaultUpload] Failed ${item.fileName || item.key}:`, error.message);
+            reportUploadIssue('item-failed', { item: item.fileName || item.key, error: String(error?.message || error), retries: item.retries || 0 }, diagCtx());
+            item.status = 'failed';
+            item.meta = null; // terminal — release
+          }
         } finally {
           delete item.inflightAt;
+          itemProgressAtRef.current.delete(item.key);
           if (tempThumbnailUri) FileSystem.deleteAsync(tempThumbnailUri, { idempotent: true }).catch(() => {});
           itemPctRef.current.delete(item.key);
           let sum = 0;
@@ -531,6 +577,10 @@ export function VaultUploadProvider({ children }) {
         if (active.size === 0) break;
         await Promise.race([...active.values(), wake.promise]);
       }
+      if (!isCurrentBatch()) return;
+      // A retry re-queued an item in this segment: run the segment again
+      // (the pre-check will skip it if it had in fact landed).
+      if (segment.some((it) => it.status === 'pending')) continue;
 
       // Segment boundary: yield the JS thread and give iOS a beat to drain
       // native autorelease pools before the next window begins. 250ms every
@@ -611,6 +661,45 @@ export function VaultUploadProvider({ children }) {
     processBatch(); // fire-and-forget
     return true;
   }, [publish, persist, processBatch]);
+
+  // Ask the pond which in-flight items it already has, and settle them. Runs
+  // on every foreground and on a slow tick while uploading. See RECONCILE.
+  const reconcileInflight = useCallback(async () => {
+    const batch = batchRef.current;
+    if (!batch || batch.status !== 'uploading' || !ownsBatch(batch)) return;
+    const now = Date.now();
+    const stuck = batch.items.filter((it) =>
+      it.status === 'inflight' && it.inflightAt && now - it.inflightAt > RECONCILE_MIN_INFLIGHT_MS && it.meta);
+    if (stuck.length === 0) return;
+    let results;
+    try { results = await checkDuplicates(stuck, batch); } catch (e) { return; /* offline — next tick */ }
+    if (batchRef.current !== batch) return;
+    let landed = 0;
+    let retried = 0;
+    stuck.forEach((it, i) => {
+      if (it.status !== 'inflight') return; // settled on its own meanwhile
+      const ctrl = itemAbortRef.current.get(it.key);
+      if (results[i]?.duplicate) {
+        it.reconcile = 'landed';
+        it.dupOf = results[i].id || null;
+        landed += 1;
+        ctrl?.abort();
+        return;
+      }
+      const lastProgress = itemProgressAtRef.current.get(it.key) || it.inflightAt;
+      if (now - it.inflightAt > RECONCILE_STALE_MS && now - lastProgress > 60 * 1000) {
+        it.reconcile = 'retry';
+        retried += 1;
+        ctrl?.abort();
+      }
+    });
+    if (landed || retried) {
+      reportUploadIssue('inflight-reconciled', {
+        landed, retried, inflight: stuck.length, batch: batch.id,
+        oldestInflightSec: Math.round((now - Math.min(...stuck.map((it) => it.inflightAt))) / 1000),
+      }, diagCtx());
+    }
+  }, [ownsBatch]);
 
   // Public: resume a paused batch (pill button / app foreground).
   const resume = useCallback(() => {
@@ -728,10 +817,14 @@ export function VaultUploadProvider({ children }) {
       // Leaving: fan the pool out NOW, while iOS still gives us a few seconds
       // of runtime — the background session carries those files while we sleep.
       if (s !== 'active') wakePoolRef.current?.();
+      // Returning: settle whatever finished while we slept but never told us.
+      if (s === 'active') reconcileInflight();
       driveProgressNotification();
     });
-    return () => sub.remove();
-  }, [processBatch, driveProgressNotification]);
+    // The slow tick catches a task stuck in the foreground too.
+    const tick = setInterval(() => { if (appActiveRef.current) reconcileInflight(); }, RECONCILE_TICK_MS);
+    return () => { sub.remove(); clearInterval(tick); };
+  }, [processBatch, driveProgressNotification, reconcileInflight]);
 
   const hide = useCallback(() => setHidden(true), []);
   const show = useCallback(() => setHidden(false), []);

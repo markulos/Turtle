@@ -38,6 +38,14 @@ whose promise never returned (app was killed) are re-queued — the server's ded
   moment the app backgrounds), items are persisted as `inflight` on every start and reset to pending on restore (the
   pre-check skips what landed), and `streamMultipartUpload`'s stall watchdog ignores the timer gap of a suspension.
   Server-side `clientImportId` dedupe for photos (the audio path has it) moves to Phase 4.
+- Device feedback (same day): the notification lagged and stuck at 99 % while backgrounded (expected — progress
+  caps at 99 until the HTTP response, and JS is asleep), but 99 % ALSO stayed after returning: some tasks' completions
+  never reached JavaScript after the suspension. Fix: RECONCILE — on every foreground and every 45 s while uploading,
+  the pond is asked (check-duplicates fingerprint) which in-flight items it already has; those are marked uploaded and
+  their dangling tasks cancelled (per-item AbortController), items in flight > 4 min with no progress are re-queued
+  once. Every anomaly goes through `services/uploadDiagnostics.js` → console + a feedback to-do note (tags Turtle App /
+  Mobile app / bug / uploads) so the root cause of the lost completions can be chased from the notes.
+  Still Phase 2 territory: a live '3 of 20' count while the app sleeps (needs JS awake), and a force-quit.
 
 ## Phase 2 — a background task that drains the queue (native rebuild)
 
