@@ -90,6 +90,6 @@ repo skill (loaded before any UI work) and by review.
 1. Which surface is it — white-on-black or black-on-white — and does every element on it contrast?
 2. Longest label, longest value, 375 pt width: nothing clipped, nothing past the edge.
 3. Every tappable ≥ 44 pt with a label; pressed state; haptic on action buttons.
-4. Sheets: in-tree, pull-down, top search, keyboard `maxHeight`, scroll-indicator inset.
+4. Sheets: in-tree, two detents (opens at 60 %, drag up to 92 %, drag down closes), top search, keyboard lift, scroll-indicator inset.
 5. Motion on the UI thread only; swift curve for shared-element moves.
 6. Ran `turtle-mobile-verify` (parse, jest, undef-audit, bundle) and listed the on-device checks.
