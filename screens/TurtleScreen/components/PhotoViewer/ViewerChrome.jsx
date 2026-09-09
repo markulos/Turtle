@@ -82,7 +82,7 @@ const clamp01 = (v) => Math.min(1, Math.max(0, v));
  * The track owns its touches through the RN responder system (it sits in the
  * chrome band, above the stage, so the stage's gesture tree never sees them).
  */
-function VideoScrubber({ currentTime, duration, onSeek, onScrubStart, onScrubEnd }) {
+function VideoScrubber({ currentTime, duration, playing, onSeek, onScrubStart, onScrubEnd }) {
   const progress = useSharedValue(0);
   const trackW = useSharedValue(0);
   const scrubbing = useSharedValue(0);
@@ -91,8 +91,22 @@ function VideoScrubber({ currentTime, duration, onSeek, onScrubStart, onScrubEnd
   const seekSettleRef = useRef(null); // { target, until }
   const [scrubLabel, setScrubLabel] = useState(null); // seconds, while the finger is down
 
+  // Pause = the bar stops NOW. The glide toward the last report is cancelled
+  // the instant `playing` flips (the shell flips it optimistically on the tap,
+  // before the player confirms), and the thumb pins to the last known time.
+  useEffect(() => {
+    if (playing) return;
+    cancelAnimation(progress);
+    if (scrubbing.value) return;
+    progress.value = duration > 0 ? clamp01(currentTime / duration) : 0;
+    // The one-time pin is the point; later reports while paused go through
+    // the effect below (without gliding).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing]);
+
   // Follow the player's reports — unless the finger owns the bar, or the
-  // report is a stale pre-seek time.
+  // report is a stale pre-seek time. Glide only while playing; paused
+  // reports (a seek landing, the end) snap.
   useEffect(() => {
     if (scrubbing.value) return;
     const pending = seekSettleRef.current;
@@ -101,8 +115,13 @@ function VideoScrubber({ currentTime, duration, onSeek, onScrubStart, onScrubEnd
       seekSettleRef.current = null;
     }
     const ratio = duration > 0 ? clamp01(currentTime / duration) : 0;
-    progress.value = withTiming(ratio, { duration: TIME_REPORT_MS, easing: Easing.linear });
-  }, [currentTime, duration, progress, scrubbing]);
+    if (playing) {
+      progress.value = withTiming(ratio, { duration: TIME_REPORT_MS, easing: Easing.linear });
+    } else {
+      cancelAnimation(progress);
+      progress.value = ratio;
+    }
+  }, [currentTime, duration, playing, progress, scrubbing]);
 
   const ratioAt = useCallback((locationX) => {
     const w = trackWRef.current;
@@ -245,6 +264,7 @@ function ViewerChrome({
           <VideoScrubber
             currentTime={video.currentTime || 0}
             duration={video.duration || 0}
+            playing={!!video.playing}
             onSeek={onSeek}
             onScrubStart={onScrubStart}
             onScrubEnd={onScrubEnd}

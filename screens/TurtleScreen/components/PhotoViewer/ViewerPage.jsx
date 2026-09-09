@@ -170,7 +170,9 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls, onV
   const sourceUrl = getFullUrl(item.rawUrl || item.url || '');
   const { pause: pauseMusic } = useMusicPlayer();
   const player = useVideoPlayer(sourceUrl, (p) => {
-    p.loop = true;
+    // No loop: a video plays to its end and PAUSES there, like Photos; play
+    // from the end starts it over (see togglePlay).
+    p.loop = false;
     p.muted = true;
     p.timeUpdateEventInterval = TIME_UPDATE_INTERVAL;
     // Opening a video preview must NOT stop whatever the music player is
@@ -218,6 +220,11 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls, onV
         const duration = Number.isFinite(player.duration) ? player.duration : 0;
         setState((s) => ({ ...s, currentTime, duration }));
       }),
+      // The end: stay on the last frame, paused, with the bar full.
+      player.addListener('playToEnd', () => {
+        const duration = Number.isFinite(player.duration) ? player.duration : 0;
+        setState((s) => ({ ...s, playing: false, currentTime: duration || s.currentTime, duration: duration || s.duration }));
+      }),
     ];
     // Seed from the player: it may already be playing/loaded by now.
     setState({
@@ -242,7 +249,17 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls, onV
     const controls = {
       togglePlay: () => {
         const next = !player.playing;
-        if (next) player.play(); else player.pause();
+        if (next) {
+          // Play from the end = start over.
+          const { currentTime, duration } = stateRef.current;
+          if (duration > 0 && currentTime >= duration - 0.05) {
+            player.currentTime = 0;
+            setState((s) => ({ ...s, currentTime: 0 }));
+          }
+          player.play();
+        } else {
+          player.pause();
+        }
         // Reflect immediately; the playingChange event confirms or corrects.
         setState((s) => ({ ...s, playing: next }));
       },
