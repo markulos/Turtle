@@ -59,6 +59,13 @@ const mockReportUploadIssue = jest.fn();
 jest.mock('../../services/uploadDiagnostics', () => ({
   reportUploadIssue: (...args) => mockReportUploadIssue(...args),
 }));
+const mockScheduleUploadDrain = jest.fn().mockResolvedValue(true);
+const mockCancelUploadDrain = jest.fn().mockResolvedValue(undefined);
+jest.mock('../../services/backgroundUploadTask', () => ({
+  registerUploadWorker: jest.fn(),
+  scheduleUploadDrain: (...args) => mockScheduleUploadDrain(...args),
+  cancelUploadDrain: (...args) => mockCancelUploadDrain(...args),
+}));
 jest.mock('../../services/uploadNotify', () => ({
   notifyUploadComplete: jest.fn(),
   updateUploadProgress: jest.fn(),

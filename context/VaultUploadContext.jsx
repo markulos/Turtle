@@ -35,6 +35,7 @@ import { useAuth } from './AuthContext';
 import { notifyUploadComplete, updateUploadProgress, clearUploadProgress } from '../services/uploadNotify';
 import { streamMultipartUpload } from '../services/streamMultipartUpload';
 import { reportUploadIssue } from '../services/uploadDiagnostics';
+import { registerUploadWorker, scheduleUploadDrain, cancelUploadDrain } from '../services/backgroundUploadTask';
 import { notifyHaptic } from '../utils/haptics';
 
 // Split into three contexts so a consumer only re-renders on the slice it
@@ -597,6 +598,7 @@ export function VaultUploadProvider({ children }) {
       //    survives an app restart.
       batch.status = 'done';
       batch.finishedAt = Date.now();
+      cancelUploadDrain(); // nothing left for a background window to do
       const c = countsOf(batch);
       console.log(`[VaultUpload] ■ batch done · ${c.uploaded} uploaded · ${c.duplicate} duplicates skipped · ${c.failed + c.missing} failed`);
       publish();
@@ -658,6 +660,8 @@ export function VaultUploadProvider({ children }) {
     lastNotifRef.current = { pct: -1, at: 0 };
     publish();
     persist();
+    // Phase 2: ask the OS for background windows while this batch has work.
+    scheduleUploadDrain();
     processBatch(); // fire-and-forget
     return true;
   }, [publish, persist, processBatch]);
@@ -816,7 +820,11 @@ export function VaultUploadProvider({ children }) {
       if (s === 'active' && batchRef.current?.status === 'paused') processBatch();
       // Leaving: fan the pool out NOW, while iOS still gives us a few seconds
       // of runtime — the background session carries those files while we sleep.
-      if (s !== 'active') wakePoolRef.current?.();
+      if (s !== 'active') {
+        wakePoolRef.current?.();
+        const b = batchRef.current;
+        if (b && b.status !== 'done' && b.items.some((it) => !TERMINAL.has(it.status))) scheduleUploadDrain();
+      }
       // Returning: settle whatever finished while we slept but never told us.
       if (s === 'active') reconcileInflight();
       driveProgressNotification();
@@ -825,6 +833,20 @@ export function VaultUploadProvider({ children }) {
     const tick = setInterval(() => { if (appActiveRef.current) reconcileInflight(); }, RECONCILE_TICK_MS);
     return () => { sub.remove(); clearInterval(tick); };
   }, [processBatch, driveProgressNotification, reconcileInflight]);
+
+  // Phase 2: the background drain task polls this view of the queue while it
+  // holds a processing window; `kick` resumes a paused batch inside it.
+  useEffect(() => {
+    registerUploadWorker({
+      isBusy: () => !!workerBusyRef.current,
+      hasPending: async () => {
+        const b = batchRef.current;
+        return !!(b && b.status !== 'done' && b.items.some((it) => !TERMINAL.has(it.status)));
+      },
+      kick: () => { if (batchRef.current && batchRef.current.status !== 'done') processBatch(); },
+    });
+    return () => registerUploadWorker(null);
+  }, [processBatch]);
 
   const hide = useCallback(() => setHidden(true), []);
   const show = useCallback(() => setHidden(false), []);

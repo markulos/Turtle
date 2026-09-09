@@ -41,10 +41,11 @@
         "CADisableMinimumFrameDurationOnPhone": true,
         "NSSupportsLiveActivities": true,
         "UIBackgroundModes": [
-          "audio"
+          "audio",
+          "processing"
         ]
       },
-      "buildNumber": "2"
+      "buildNumber": "3"
     },
     "android": {
       "package": "com.markulos.passwordtaskmanager",
@@ -132,7 +133,8 @@
           }
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-background-task"
     ],
     "experiments": {
       "tsconfigPaths": false
