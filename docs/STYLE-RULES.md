@@ -48,11 +48,14 @@ repo skill (loaded before any UI work) and by review.
 
 - A sheet over an open Modal is an in-tree overlay, never a sibling `Modal` (iOS drops it silently).
   Sheets render LAST in their tree and carry `zIndex` so they draw over chrome and cards.
-- Every bottom sheet pulls down to close through `utils/useSheetDismiss` (grab region = the whole
-  card; the scrim fades with the drag).
-- Keyboard-aware sheets: the card is in normal flow inside the `KeyboardAvoidingView` (absolute
-  children ignore its padding) and takes a `maxHeight`, never a fixed `height`, so the keyboard
-  shrinks it instead of pushing the header off-screen. Search / add fields go at the TOP of a sheet.
+- Every card that pops up from below has TWO DETENTS through `utils/useSheetDetents`: it opens at
+  COLLAPSED (60 % of the screen), a drag up takes it to EXPANDED (92 %), a drag down past collapsed
+  closes it; a flick decides faster than distance. Grab region = the whole card; the scrim fades with a
+  closing pull; an inner list scrolls only once the sheet is expanded and hands back a downward drag at its
+  top. (`utils/useSheetDismiss` is the legacy single-detent hook — migrate, do not add new users.)
+- Keyboard-aware sheets: no KeyboardAvoidingView. The sheet listens to the keyboard, jumps to EXPANDED,
+  lifts by the keyboard height on a native-driver transform and caps its height below the status bar; it
+  drops back when the keyboard goes. Search / add fields go at the TOP of a sheet.
 - Every sheet/page `ScrollView` sets `scrollIndicatorInsets={{ right: 1 }}` and `indicatorStyle`,
   or iOS parks the indicator mid-page.
 
@@ -65,8 +68,11 @@ repo skill (loaded before any UI work) and by review.
 ## 6. Motion
 
 - Shared-element moves (a photo growing out of / flying back into its tile) use the swift curve
-  `Easing.bezier(0.2, 0.9, 0.25, 1)`, 300–340 ms: fast out of the gate, soft landing. A picture fades
-  only in the last ~12 % of the flight — it must arrive opaque on its target.
+  `Easing.bezier(0.2, 0.9, 0.25, 1)`, 300–340 ms: fast out of the gate, soft landing. On the way out
+  the picture does NOT fade in flight: it stays opaque and switches off the instant it is on its target.
+- Timelines and progress: drive a shared value and glide it between reports on the UI thread; while
+  the finger owns a control it IS the value (no React state per frame); throttle the work you send
+  (seeks) and ignore stale reports until the target is confirmed.
 - Gesture-thrown surfaces settle with `R_TIMING.settle` (`utils/motionReanimated`). Reduced motion is
   Reanimated's job; never gate it by hand.
 - Never animate a layout prop (`height`, `width`, `padding`) on the JS thread; use a transform, or

@@ -1,5 +1,5 @@
 /**
- * ViewerSheet — the bottom-sheet shell the viewer's two sheets share.
+ * ViewerSheet — the bottom-sheet shell the viewer's sheets share.
  *
  * An IN-TREE overlay inside the viewer's Modal, never a second Modal (iOS
  * silently drops a sibling Modal over an open one). The parent mounts it only
@@ -7,21 +7,27 @@
  * carries a high zIndex so it draws over every other overlay the viewer or
  * the gallery puts inside the Modal (chrome, share cards).
  *
- * Scrim + card. The card slides up on mount, and closes three ways: the scrim
- * tap, the Done button, and the app-wide pull-down (utils/useSheetDismiss —
- * the grab region is the whole card, the scrim fades with the drag, and a
- * committed pull slides the card off before onClose fires). `keyboard` wraps
- * the card in a KeyboardAvoidingView for the sheets that type; `topBar` is a
- * fixed row under the header (a composer / search field); `footer` a fixed
- * row at the bottom. `dark` renders the translucent-black variant with white
- * text, for a sheet that should read as part of the viewer, not the app.
+ * Two detents (the app-wide rule, docs/STYLE-RULES.md §4): the card opens at
+ * COLLAPSED (60 % of the screen), a drag up takes it to EXPANDED (92 %), a
+ * drag down past collapsed closes it — through utils/useSheetDetents. The
+ * scrim tap and the Done button close too. The card is laid out at its
+ * expanded height and translated down by the detent difference; the scrim
+ * fades as a closing pull leaves the collapsed detent.
+ *
+ * Keyboard: no KeyboardAvoidingView. The sheet listens to the keyboard, jumps
+ * to EXPANDED, lifts by the keyboard's height (a native-driver transform) and
+ * caps its height so the header stays on screen; it drops back when the
+ * keyboard goes. `topBar` is a fixed row under the header (a composer /
+ * search field); `footer` a fixed row at the bottom. `dark` renders the
+ * frosted translucent-black variant with white text, for a sheet that should
+ * read as part of the viewer, not the app.
  */
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
   Easing,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -29,14 +35,16 @@ import {
   Text,
   View,
 } from 'react-native';
-
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useSheetDismiss } from '../../../../utils/useSheetDismiss';
+import { useSheetDetents } from '../../../../utils/useSheetDetents';
 
 const SCREEN_H = Dimensions.get('window').height || 900;
 const ENTER_MS = 240;
 const EXIT_MS = 200;
+export const COLLAPSED_RATIO = 0.6;
+export const EXPANDED_RATIO = 0.92;
 
 /**
  * The dark variant is a white-on-black surface (docs/STYLE-RULES.md): a
@@ -87,7 +95,8 @@ export default function ViewerSheet({
   onClose,
   title,
   doneLabel = 'Done',
-  heightRatio = 0.62,
+  collapsedRatio = COLLAPSED_RATIO,
+  expandedRatio = EXPANDED_RATIO,
   keyboard = false,
   dark = false,
   theme,
@@ -96,9 +105,20 @@ export default function ViewerSheet({
   children,
   testID,
 }) {
+  const insets = useSafeAreaInsets();
+  const expandedH = Math.round(SCREEN_H * expandedRatio);
+  const collapsedOffset = Math.max(0, Math.round(SCREEN_H * (expandedRatio - collapsedRatio)));
+
   const enter = useRef(new Animated.Value(SCREEN_H)).current;
   const scrim = useRef(new Animated.Value(0)).current;
-  const { dragY, panHandlers, sheetDragStyle, scrollProps } = useSheetDismiss(onClose, true);
+  const lift = useRef(new Animated.Value(0)).current;
+  const [kb, setKb] = useState(0);
+
+  const { offsetY, panHandlers, sheetStyle, scrollProps, expand, close: closeByDrag } = useSheetDetents({
+    collapsedOffset,
+    onClose,
+    visible: true,
+  });
 
   useEffect(() => {
     Animated.parallel([
@@ -107,97 +127,105 @@ export default function ViewerSheet({
     ]).start();
   }, [enter, scrim]);
 
-  const close = useCallback(() => {
-    Animated.parallel([
-      Animated.timing(enter, { toValue: SCREEN_H, duration: EXIT_MS, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-      Animated.timing(scrim, { toValue: 0, duration: EXIT_MS - 20, useNativeDriver: true }),
-    ]).start(({ finished }) => {
-      if (finished) onClose?.();
-    });
-  }, [enter, scrim, onClose]);
+  // Keyboard: expand, lift above it, cap the height so the header stays put.
+  useEffect(() => {
+    if (!keyboard) return undefined;
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      const ms = Platform.OS === 'ios' ? (e?.duration || 250) : 180;
+      setKb(h);
+      expand();
+      Animated.timing(lift, { toValue: -h, duration: ms, easing: Easing.bezier(0.38, 0.7, 0.125, 1), useNativeDriver: true }).start();
+    };
+    const onHide = (e) => {
+      const ms = Platform.OS === 'ios' ? (e?.duration || 250) : 180;
+      setKb(0);
+      Animated.timing(lift, { toValue: 0, duration: ms, easing: Easing.bezier(0.38, 0.7, 0.125, 1), useNativeDriver: true }).start();
+    };
+    const s1 = Keyboard.addListener(showEvt, onShow);
+    const s2 = Keyboard.addListener(hideEvt, onHide);
+    return () => { s1.remove(); s2.remove(); };
+  }, [keyboard, expand, lift]);
 
-  // The scrim fades with the entrance AND with a pull on the card.
-  const scrimOpacity = Animated.multiply(
+  const close = useCallback(() => {
+    Keyboard.dismiss();
+    Animated.timing(scrim, { toValue: 0, duration: EXIT_MS - 20, useNativeDriver: true }).start();
+    closeByDrag();
+  }, [scrim, closeByDrag]);
+
+  // The scrim fades with the entrance AND as a closing pull leaves the
+  // collapsed detent.
+  const scrimOpacity = useMemo(() => Animated.multiply(
     scrim,
-    dragY.interpolate({ inputRange: [0, SCREEN_H * 0.5], outputRange: [1, 0], extrapolate: 'clamp' }),
-  );
+    offsetY.interpolate({
+      inputRange: [collapsedOffset, collapsedOffset + SCREEN_H * 0.4],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    }),
+  ), [scrim, offsetY, collapsedOffset]);
 
   const colors = sheetColors(theme, dark);
-  const cardHeight = Math.round(SCREEN_H * heightRatio);
-
-  const card = (
-    <Animated.View
-      style={[
-        styles.card,
-        // Inside the KeyboardAvoidingView the card must be in NORMAL flow:
-        // `padding` behaviour pads the container, and an absolutely
-        // positioned child ignores its parent's padding — the card would sit
-        // pinned to the bottom edge with the composer under the keyboard.
-        // The wrapper's flex-end alignment keeps it at the bottom instead.
-        keyboard ? styles.cardFlow : styles.cardPinned,
-        // Pinned: a fixed height. In keyboard mode a CEILING instead — the
-        // keyboard's padding shrinks the card rather than shoving its header
-        // off the top of the screen.
-        keyboard ? { maxHeight: cardHeight } : { height: cardHeight },
-        { backgroundColor: dark ? 'transparent' : colors.card },
-        { transform: [{ translateY: enter }] },
-      ]}
-      {...panHandlers}
-      testID={testID ? `${testID}-card` : undefined}
-    >
-      {/* Dark variant: frosted black — the photo shows through, blurred, under a
-          tint that keeps white text legible. Android gets the software blur. */}
-      {dark && (
-        <BlurView
-          intensity={55}
-          tint="dark"
-          experimentalBlurMethod="dimezisBlurView"
-          style={StyleSheet.absoluteFillObject}
-          pointerEvents="none"
-        />
-      )}
-      {dark && <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.card }]} pointerEvents="none" />}
-      {/* Nested transforms compose: the entrance on the outer view, the drag on this one. */}
-      <Animated.View style={[styles.cardInner, sheetDragStyle]}>
-        <View style={[styles.handle, { backgroundColor: colors.handle }]} />
-        <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
-          <Pressable onPress={close} hitSlop={12} accessibilityRole="button" accessibilityLabel={doneLabel} testID={testID ? `${testID}-done` : undefined}>
-            <Text style={[styles.done, { color: colors.primary }]}>{doneLabel}</Text>
-          </Pressable>
-        </View>
-        {topBar}
-        <ScrollView
-          style={styles.body}
-          contentContainerStyle={styles.bodyContent}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          showsVerticalScrollIndicator
-          scrollIndicatorInsets={{ right: 1 }}
-          indicatorStyle={dark ? 'white' : 'default'}
-          {...scrollProps}
-        >
-          {children}
-        </ScrollView>
-        {footer}
-      </Animated.View>
-    </Animated.View>
-  );
+  // With the keyboard up the card is expanded and lifted; cap it so its top
+  // still clears the status bar.
+  const cardHeight = kb > 0 ? Math.min(expandedH, SCREEN_H - kb - insets.top - 8) : expandedH;
 
   return (
     <View style={[StyleSheet.absoluteFill, styles.root]} testID={testID}>
       <Animated.View style={[StyleSheet.absoluteFill, dark ? styles.scrimDark : styles.scrim, { opacity: scrimOpacity }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close" />
       </Animated.View>
-      {keyboard ? (
-        <KeyboardAvoidingView
-          style={styles.fill}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          pointerEvents="box-none"
-        >
-          {card}
-        </KeyboardAvoidingView>
-      ) : card}
+
+      <Animated.View
+        style={[
+          styles.card,
+          { height: cardHeight, backgroundColor: dark ? 'transparent' : colors.card },
+          { transform: [{ translateY: Animated.add(enter, lift) }] },
+        ]}
+        {...panHandlers}
+        testID={testID ? `${testID}-card` : undefined}
+      >
+        {/* The detent / drag translate composes with the entrance + keyboard lift above. */}
+        <Animated.View style={[styles.cardInner, sheetStyle]}>
+          {/* Dark variant: frosted black — the photo shows through, blurred,
+              under a tint that keeps white text legible. Android gets the
+              software blur. */}
+          {dark && (
+            <BlurView
+              intensity={55}
+              tint="dark"
+              experimentalBlurMethod="dimezisBlurView"
+              style={StyleSheet.absoluteFillObject}
+              pointerEvents="none"
+            />
+          )}
+          {dark && <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.card }]} pointerEvents="none" />}
+          <View style={styles.cardContent}>
+            <View style={[styles.handle, { backgroundColor: colors.handle }]} />
+            <View style={styles.header}>
+              <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>{title}</Text>
+              <Pressable onPress={close} hitSlop={12} accessibilityRole="button" accessibilityLabel={doneLabel} testID={testID ? `${testID}-done` : undefined}>
+                <Text style={[styles.done, { color: colors.primary }]}>{doneLabel}</Text>
+              </Pressable>
+            </View>
+            {topBar}
+            <ScrollView
+              style={styles.body}
+              contentContainerStyle={[styles.bodyContent, { paddingBottom: 24 + insets.bottom }]}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator
+              scrollIndicatorInsets={{ right: 1 }}
+              indicatorStyle={dark ? 'white' : 'default'}
+              {...scrollProps}
+            >
+              {children}
+            </ScrollView>
+            {footer}
+          </View>
+        </Animated.View>
+      </Animated.View>
     </View>
   );
 }
@@ -207,10 +235,6 @@ const styles = StyleSheet.create({
     zIndex: 1000,
     elevation: 1000,
   },
-  fill: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
   scrim: {
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
@@ -218,24 +242,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
   card: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    overflow: 'hidden',
-  },
-  cardPinned: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
   },
-  cardFlow: {
-    width: '100%',
-    flexShrink: 1,
-    minHeight: 220,
-  },
   cardInner: {
     flex: 1,
-    flexShrink: 1,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
+  },
+  cardContent: {
+    flex: 1,
     paddingHorizontal: 20,
   },
   handle: {
@@ -255,6 +274,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '700',
+    flexShrink: 1,
   },
   done: {
     fontSize: 16,

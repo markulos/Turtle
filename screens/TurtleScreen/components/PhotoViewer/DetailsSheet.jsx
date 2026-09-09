@@ -36,7 +36,7 @@ export default function DetailsSheet({ item, onEditTags, onClose, theme, dark = 
   }, [item]);
 
   return (
-    <ViewerSheet title="Details" onClose={onClose} theme={theme} dark={dark} heightRatio={0.55} testID="details-sheet">
+    <ViewerSheet title="Details" onClose={onClose} theme={theme} dark={dark} testID="details-sheet">
       <Row icon="calendar-clock" label="Taken" value={formatViewerTimestamp(item)} colors={colors} />
       <Row icon="file-outline" label="File" value={item?.filename} colors={colors} />
       <Row icon={isVideo ? 'video-outline' : 'image-size-select-large'} label="Size" value={sizeText} colors={colors} />

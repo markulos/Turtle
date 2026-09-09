@@ -144,7 +144,7 @@ export default function TagsSheet({ item, suggestions = [], onCommitTags, onClos
   );
 
   return (
-    <ViewerSheet title="Tags" onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} heightRatio={0.86} testID="tags-sheet">
+    <ViewerSheet title="Tags" onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} testID="tags-sheet">
       {query.length > 0 ? (
         <>
           {!exactExists && (
