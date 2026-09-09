@@ -15,14 +15,23 @@
  *   translateX = pageTranslate(index, active, pagerX) + (isActive ? dragX : 0)
  *   translateY = isActive ? dragY : 0
  *   scale      = isActive ? dismissScale(dragY) × (zoomOwner ? scale : 1) : 1
- *   opacity    = isActive ? 1 : (dragY > 0 || openProgress < 1 ? 0 : 1)
+ *   opacity    = isActive ? fade(openProgress) : (dragY > 0 || openProgress < 1 ? 0 : 1)
  * The zoom transform belongs to `zoomIndex`, which lags `activeIndex` until a
  * page settle finishes, so a zoomed page stays zoomed while it slides out and
  * the incoming page never inherits it. Neighbours vanish during a pull and
  * during the open/close pop, because scaling the active page about its centre
  * would otherwise let the next page peek in from the side.
+ *
+ * The tile crop: inside the page sits a FRAME that clips the media. At rest
+ * (openProgress 1) it is the whole page, so nothing is cropped; as the pop
+ * runs toward 0 — opening out of a grid tile, or flying back into one — it
+ * closes down to a square the size of the photo's letterboxed short side,
+ * centred, while the page fades. Combined with the stage scaling to the tile,
+ * the picture ends as a tile-shaped, cover-cropped square exactly where the
+ * tile is (iOS Photos' shared-element feel). The frame's aspect comes from
+ * the ACTIVE photo; neighbours are hidden whenever the frame is not full.
  */
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Image } from 'expo-image';
@@ -30,21 +39,28 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 
 import { useMusicPlayer } from '../../../../context/MusicPlayerContext';
 import { dismissScale, pageTranslate } from '../../../../utils/viewerGestureMath';
+import { containSize } from '../../../../utils/zoomMath';
 import { useHdReady, useIsActive } from './stores';
+
+/** The last stretch of the pop over which the picture fades in / out. */
+const FADE_SPAN = 0.35;
+/** Seconds between the player's time reports while a video is active. */
+const TIME_UPDATE_INTERVAL = 0.25;
 
 function usePageStyle(index, sv) {
   return useAnimatedStyle(() => {
     const active = index === sv.activeIndex.value;
     const zoomOwner = index === sv.zoomIndex.value;
+    const p = Math.min(1, Math.max(0, sv.openProgress.value));
     const x = pageTranslate(index, sv.activeIndex.value, sv.pagerX.value, sv.pageW) + (active ? sv.dragX.value : 0);
     const y = active ? sv.dragY.value : 0;
     const pull = active ? dismissScale(sv.dragY.value, sv.height) : 1;
     const zoom = zoomOwner ? sv.scale.value : 1;
     const zx = zoomOwner ? sv.tx.value : 0;
     const zy = zoomOwner ? sv.ty.value : 0;
-    const hidden = !active && (sv.dragY.value > 0 || sv.openProgress.value < 1);
+    const hidden = !active && (sv.dragY.value > 0 || p < 1);
     return {
-      opacity: hidden ? 0 : 1,
+      opacity: hidden ? 0 : Math.min(1, p / FADE_SPAN),
       transform: [
         { translateX: x + zx },
         { translateY: y + zy },
@@ -52,6 +68,38 @@ function usePageStyle(index, sv) {
       ],
     };
   }, [index, sv]);
+}
+
+/** The clipping frame: full page at rest, a centred square at the tile. */
+function useFrameStyle(sv) {
+  return useAnimatedStyle(() => {
+    const p = Math.min(1, Math.max(0, sv.openProgress.value));
+    const content = containSize(sv.width, sv.height, sv.aspect.value);
+    const side = Math.min(content.width, content.height);
+    const fw = side + (sv.width - side) * p;
+    const fh = side + (sv.height - side) * p;
+    return {
+      width: fw,
+      height: fh,
+      left: (sv.width - fw) / 2,
+      top: (sv.height - fh) / 2,
+    };
+  }, [sv]);
+}
+
+/** The media stays page-sized and page-centred inside the moving frame. */
+function useMediaStyle(sv) {
+  return useAnimatedStyle(() => {
+    const p = Math.min(1, Math.max(0, sv.openProgress.value));
+    const content = containSize(sv.width, sv.height, sv.aspect.value);
+    const side = Math.min(content.width, content.height);
+    const fw = side + (sv.width - side) * p;
+    const fh = side + (sv.height - side) * p;
+    return {
+      left: (fw - sv.width) / 2,
+      top: (fh - sv.height) / 2,
+    };
+  }, [sv]);
 }
 
 // ── Photo ────────────────────────────────────────────────────────────────────
@@ -112,18 +160,26 @@ const PhotoBody = React.memo(({ item, hdStore, getFullUrl, onAspect }) => {
 PhotoBody.displayName = 'PhotoBody';
 
 // ── Video ────────────────────────────────────────────────────────────────────
-const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls }) => {
+const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls, onVideoState }) => {
   const sourceUrl = getFullUrl(item.rawUrl || item.url || '');
   const { pause: pauseMusic } = useMusicPlayer();
   const player = useVideoPlayer(sourceUrl, (p) => {
     p.loop = true;
     p.muted = true;
+    p.timeUpdateEventInterval = TIME_UPDATE_INTERVAL;
     // Opening a video preview must NOT stop whatever the music player is
     // playing: 'auto' claims the audio session as soon as playback starts,
     // muted or not. Muted playback mixes; the session is taken only when the
     // user asks to hear this video.
     p.audioMixingMode = 'mixWithOthers';
   });
+
+  // Truth about the player, from its own events — the play/pause and mute
+  // icons follow this, never an optimistic guess that the native side may
+  // not have honoured yet.
+  const [state, setState] = useState({ playing: false, muted: true, currentTime: 0, duration: 0 });
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     if (isActive) {
@@ -136,13 +192,49 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls }) =
     }
   }, [isActive, player]);
 
+  useEffect(() => {
+    if (!isActive || typeof player.addListener !== 'function') return undefined;
+    const subs = [
+      player.addListener('playingChange', (e) => {
+        const playing = typeof e?.isPlaying === 'boolean' ? e.isPlaying : !!player.playing;
+        setState((s) => (s.playing === playing ? s : { ...s, playing }));
+      }),
+      player.addListener('mutedChange', (e) => {
+        const muted = typeof e?.muted === 'boolean' ? e.muted : !!player.muted;
+        setState((s) => (s.muted === muted ? s : { ...s, muted }));
+      }),
+      player.addListener('timeUpdate', (e) => {
+        const currentTime = Number.isFinite(e?.currentTime) ? e.currentTime : 0;
+        const duration = Number.isFinite(player.duration) ? player.duration : 0;
+        setState((s) => ({ ...s, currentTime, duration }));
+      }),
+    ];
+    // Seed from the player: it may already be playing/loaded by now.
+    setState({
+      playing: !!player.playing,
+      muted: player.muted !== false,
+      currentTime: Number.isFinite(player.currentTime) ? player.currentTime : 0,
+      duration: Number.isFinite(player.duration) ? player.duration : 0,
+    });
+    return () => subs.forEach((s) => { try { s?.remove?.(); } catch { /* already gone */ } });
+  }, [isActive, player]);
+
+  // Hand the shell the live state while active — the chrome draws from it.
+  useEffect(() => {
+    if (!isActive || !onVideoState) return undefined;
+    onVideoState(item.id, state);
+    return undefined;
+  }, [isActive, onVideoState, item.id, state]);
+
   // The chrome owns the buttons; the active video page lends it the player.
   useEffect(() => {
     if (!isActive || !onVideoControls) return undefined;
     const controls = {
       togglePlay: () => {
-        if (player.playing) player.pause(); else player.play();
-        return { playing: player.playing, muted: player.muted };
+        const next = !player.playing;
+        if (next) player.play(); else player.pause();
+        // Reflect immediately; the playingChange event confirms or corrects.
+        setState((s) => ({ ...s, playing: next }));
       },
       // Unmuting is the ONLY thing that stops the music: the user explicitly
       // asked to hear this video. Re-muting hands the session back.
@@ -151,9 +243,14 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls }) =
         player.muted = nextMuted;
         player.audioMixingMode = nextMuted ? 'mixWithOthers' : 'doNotMix';
         if (!nextMuted) pauseMusic?.();
-        return { playing: player.playing, muted: player.muted };
+        setState((s) => ({ ...s, muted: nextMuted }));
       },
-      getState: () => ({ playing: player.playing, muted: player.muted }),
+      seekTo: (seconds) => {
+        const duration = stateRef.current.duration || (Number.isFinite(player.duration) ? player.duration : 0);
+        const t = Math.min(Math.max(0, seconds), duration > 0 ? duration : seconds);
+        player.currentTime = t;
+        setState((s) => ({ ...s, currentTime: t }));
+      },
     };
     onVideoControls(item.id, controls);
     return () => onVideoControls(item.id, null);
@@ -171,9 +268,13 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls }) =
 VideoBody.displayName = 'VideoBody';
 
 // ── The page ─────────────────────────────────────────────────────────────────
-export const ViewerPage = React.memo(({ item, index, sv, activeStore, hdStore, getFullUrl, onAspect, onVideoControls }) => {
+export const ViewerPage = React.memo(({
+  item, index, sv, activeStore, hdStore, getFullUrl, onAspect, onVideoControls, onVideoState,
+}) => {
   const isActive = useIsActive(activeStore, item.id);
   const style = usePageStyle(index, sv);
+  const frameStyle = useFrameStyle(sv);
+  const mediaStyle = useMediaStyle(sv);
   const frame = useMemo(() => ({ width: sv.width, height: sv.height }), [sv.width, sv.height]);
 
   return (
@@ -183,13 +284,21 @@ export const ViewerPage = React.memo(({ item, index, sv, activeStore, hdStore, g
       pointerEvents="none"
       testID={`viewer-page-${item.id}`}
     >
-      <View style={styles.clip}>
-        {item.type === 'video' ? (
-          <VideoBody item={item} isActive={isActive} getFullUrl={getFullUrl} onVideoControls={onVideoControls} />
-        ) : (
-          <PhotoBody item={item} hdStore={hdStore} getFullUrl={getFullUrl} onAspect={onAspect} />
-        )}
-      </View>
+      <Animated.View style={[styles.frame, frameStyle]} collapsable={false}>
+        <Animated.View style={[styles.media, frame, mediaStyle]} collapsable={false}>
+          {item.type === 'video' ? (
+            <VideoBody
+              item={item}
+              isActive={isActive}
+              getFullUrl={getFullUrl}
+              onVideoControls={onVideoControls}
+              onVideoState={onVideoState}
+            />
+          ) : (
+            <PhotoBody item={item} hdStore={hdStore} getFullUrl={getFullUrl} onAspect={onAspect} />
+          )}
+        </Animated.View>
+      </Animated.View>
     </Animated.View>
   );
 });
@@ -202,12 +311,15 @@ const styles = StyleSheet.create({
     top: 0,
   },
   // Transparent, not black: the backdrop behind the stage is the black. A
-  // black page box would shrink and fly along with the photo on a pull-down,
-  // and iOS moves only the picture.
-  clip: {
-    flex: 1,
+  // black box would shrink and fly along with the photo on a pull-down, and
+  // iOS moves only the picture.
+  frame: {
+    position: 'absolute',
     overflow: 'hidden',
     backgroundColor: 'transparent',
+  },
+  media: {
+    position: 'absolute',
   },
 });
 

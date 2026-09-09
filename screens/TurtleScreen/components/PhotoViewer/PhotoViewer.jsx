@@ -72,7 +72,13 @@ function originFor(rect, item) {
   if (!(rect.width > 0)) return { x, y, scale: FALLBACK_SCALE };
   const aspect = item && item.width > 0 && item.height > 0 ? item.width / item.height : 0;
   const containW = aspect > 0 ? Math.min(WIN_W, WIN_H * aspect) : WIN_W;
-  const scale = Math.min(1, Math.max(0.08, rect.width / containW));
+  const containH = aspect > 0 ? Math.min(WIN_H, WIN_W / aspect) : WIN_H;
+  // The page crops itself to a square of the photo's SHORT side as the pop
+  // closes (ViewerPage's frame), so that square is what has to land on the
+  // tile: scale it to the tile's width and the picture ends tile-shaped,
+  // cover-cropped, on the tile.
+  const side = Math.max(1, Math.min(containW, containH));
+  const scale = Math.min(1, Math.max(0.08, rect.width / side));
   return { x, y, scale };
 }
 
@@ -119,7 +125,9 @@ export default function PhotoViewer({
 
   const safeIndex = clampIndex(activeIndex, count);
   const activeItem = count ? list[safeIndex] : null;
-  const chromeShown = chromeVisible && !zoomed;
+  // The details sheet takes the whole screen for itself: every other overlay
+  // (the chrome bands) goes away while it is up and comes back when it closes.
+  const chromeShown = chromeVisible && !zoomed && !detailsOpen;
 
   // ── mirrors into the shared values (all at rest) ─────────────────────────
   useEffect(() => { sv.count.value = count; }, [sv, count]);
@@ -264,6 +272,8 @@ export default function PhotoViewer({
     activeIdRef.current = item ? item.id : null;
     setActiveIndex(i);
     if (item) activeStore?.set(item.id);
+    // Video controls belong to the page that is active NOW; a photo has none.
+    if (!item || item.type !== 'video') { videoControlsRef.current = null; setVideoState(null); }
     dragStore?.set(false);
     if (item) onIndexSettled?.(item, i);
   }, [activeStore, dragStore, onIndexSettled]);
@@ -278,14 +288,23 @@ export default function PhotoViewer({
     if (id === activeIdRef.current) sv.aspect.value = aspect;
   }, [sv]);
 
+  // The active video page lends the shell its player (controls) and streams
+  // its truth (state: playing / muted / time / duration, from the player's
+  // own events). Only the ACTIVE page's reports are taken.
   const handleVideoControls = useCallback((id, controls) => {
     if (controls) {
-      videoControlsRef.current = controls;
-      setVideoState(controls.getState());
-    } else if (!videoControlsRef.current || id === activeIdRef.current) {
+      if (id === activeIdRef.current) videoControlsRef.current = controls;
+    } else if (id === activeIdRef.current) {
       videoControlsRef.current = null;
       setVideoState(null);
     }
+  }, []);
+  const handleVideoState = useCallback((id, state) => {
+    if (id !== activeIdRef.current) return;
+    setVideoState(state);
+  }, []);
+  const handleSeek = useCallback((seconds) => {
+    videoControlsRef.current?.seekTo?.(seconds);
   }, []);
 
   // ── chrome callbacks ─────────────────────────────────────────────────────
@@ -293,14 +312,8 @@ export default function PhotoViewer({
   const handleTags = useCallback(() => { setDetailsOpen(false); setTagsOpen(true); }, []);
   const handleShare = useCallback(() => { if (activeItem) onShare?.(activeItem); }, [activeItem, onShare]);
   const handleFavourite = useCallback(() => { if (activeItem) onToggleFavourite?.(activeItem); }, [activeItem, onToggleFavourite]);
-  const handleTogglePlay = useCallback(() => {
-    const next = videoControlsRef.current?.togglePlay();
-    if (next) setVideoState(next);
-  }, []);
-  const handleToggleMute = useCallback(() => {
-    const next = videoControlsRef.current?.toggleMute();
-    if (next) setVideoState(next);
-  }, []);
+  const handleTogglePlay = useCallback(() => { videoControlsRef.current?.togglePlay?.(); }, []);
+  const handleToggleMute = useCallback(() => { videoControlsRef.current?.toggleMute?.(); }, []);
   const closeTags = useCallback(() => setTagsOpen(false), []);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
   const editTagsFromDetails = useCallback(() => { setDetailsOpen(false); setTagsOpen(true); }, []);
@@ -325,11 +338,12 @@ export default function PhotoViewer({
           getFullUrl={getFullUrl}
           onAspect={handleAspect}
           onVideoControls={handleVideoControls}
+          onVideoState={handleVideoState}
         />,
       );
     }
     return out;
-  }, [list, count, safeIndex, sv, activeStore, hdStore, getFullUrl, handleAspect, handleVideoControls]);
+  }, [list, count, safeIndex, sv, activeStore, hdStore, getFullUrl, handleAspect, handleVideoControls, handleVideoState]);
 
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: sv.openProgress.value * dismissBackdrop(sv.dragY.value, sv.height),
@@ -376,8 +390,22 @@ export default function PhotoViewer({
           video={activeItem?.type === 'video' ? videoState : null}
           onTogglePlay={handleTogglePlay}
           onToggleMute={handleToggleMute}
+          onSeek={handleSeek}
         />
 
+        {children}
+
+        {/* Sheets go LAST (and carry their own zIndex) so they draw over every
+            other overlay in this Modal: the chrome, the share chooser, the
+            "preparing" card. Tags is the very top — it can open from Details. */}
+        {detailsOpen && !!activeItem && (
+          <DetailsSheet
+            item={activeItem}
+            onEditTags={editTagsFromDetails}
+            onClose={closeDetails}
+            theme={theme}
+          />
+        )}
         {tagsOpen && !!activeItem && (
           <TagsSheet
             item={activeItem}
@@ -387,16 +415,6 @@ export default function PhotoViewer({
             theme={theme}
           />
         )}
-        {detailsOpen && !!activeItem && (
-          <DetailsSheet
-            item={activeItem}
-            onEditTags={editTagsFromDetails}
-            onClose={closeDetails}
-            theme={theme}
-          />
-        )}
-
-        {children}
       </GestureHandlerRootView>
     </Modal>
   );

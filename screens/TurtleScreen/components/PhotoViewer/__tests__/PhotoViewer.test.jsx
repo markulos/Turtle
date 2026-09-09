@@ -55,6 +55,26 @@ jest.mock('../../../../../context/MusicPlayerContext', () => ({
 }));
 
 import PhotoViewer from '../PhotoViewer';
+import { formatClock } from '../ViewerChrome';
+import { matchTags, mergeTags } from '../TagsSheet';
+
+describe('viewer helpers', () => {
+  test('formatClock', () => {
+    expect(formatClock(0)).toBe('0:00');
+    expect(formatClock(7.9)).toBe('0:07');
+    expect(formatClock(63)).toBe('1:03');
+    expect(formatClock(3725)).toBe('1:02:05');
+    expect(formatClock(NaN)).toBe('0:00');
+  });
+  test('matchTags ranks earlier matches first and ignores case', () => {
+    expect(matchTags(['Beach', 'Trip', 'Road trip', 'Zebra'], 'tri')).toEqual(['Trip', 'Road trip']);
+    expect(matchTags(['Beach', 'Trip'], '')).toEqual(['Beach', 'Trip']);
+    expect(matchTags(['Beach'], 'xyz')).toEqual([]);
+  });
+  test('mergeTags trims, dedupes, keeps order', () => {
+    expect(mergeTags(['A'], [' B ', '', 'A', 'C'])).toEqual(['A', 'B', 'C']);
+  });
+});
 
 const makeStore = () => {
   let value = null;
