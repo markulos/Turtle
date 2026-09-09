@@ -44,7 +44,9 @@ const SCREEN_H = Dimensions.get('window').height || 900;
 const ENTER_MS = 240;
 const EXIT_MS = 200;
 export const COLLAPSED_RATIO = 0.6;
-export const EXPANDED_RATIO = 0.92;
+/** Expanded = the whole screen: the corners square off and content clears the status bar. */
+export const EXPANDED_RATIO = 1;
+const CORNER_RADIUS = 24;
 
 /**
  * The dark variant is a white-on-black surface (docs/STYLE-RULES.md): a
@@ -113,12 +115,17 @@ export default function ViewerSheet({
   const scrim = useRef(new Animated.Value(0)).current;
   const lift = useRef(new Animated.Value(0)).current;
   const [kb, setKb] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  const onDetent = useCallback((d) => setExpanded(d === 'expanded'), []);
 
   const { offsetY, panHandlers, sheetStyle, scrollProps, expand, close: closeByDrag } = useSheetDetents({
     collapsedOffset,
     onClose,
+    onDetent,
     visible: true,
   });
+  // Full screen at the expanded detent: square corners, content below the notch.
+  const fullScreen = expanded && expandedRatio >= 1;
 
   useEffect(() => {
     Animated.parallel([
@@ -187,7 +194,7 @@ export default function ViewerSheet({
         testID={testID ? `${testID}-card` : undefined}
       >
         {/* The detent / drag translate composes with the entrance + keyboard lift above. */}
-        <Animated.View style={[styles.cardInner, sheetStyle]}>
+        <Animated.View style={[styles.cardInner, { borderTopLeftRadius: fullScreen ? 0 : CORNER_RADIUS, borderTopRightRadius: fullScreen ? 0 : CORNER_RADIUS }, sheetStyle]}>
           {/* Dark variant: frosted black — the photo shows through, blurred,
               under a tint that keeps white text legible. Android gets the
               software blur. */}
@@ -201,7 +208,7 @@ export default function ViewerSheet({
             />
           )}
           {dark && <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.card }]} pointerEvents="none" />}
-          <View style={styles.cardContent}>
+          <View style={[styles.cardContent, fullScreen && { paddingTop: insets.top }]}>
             <View style={[styles.handle, { backgroundColor: colors.handle }]} />
             <View style={styles.header}>
               <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>{title}</Text>
@@ -249,8 +256,6 @@ const styles = StyleSheet.create({
   },
   cardInner: {
     flex: 1,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
     overflow: 'hidden',
   },
   cardContent: {

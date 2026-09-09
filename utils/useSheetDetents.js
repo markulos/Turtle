@@ -58,10 +58,14 @@ export function shouldClaimDrag(gesture, { blocked, atTop, expanded }) {
   return !expanded;
 }
 
-export function useSheetDetents({ collapsedOffset, onClose, visible = true, startExpanded = false }) {
+export function useSheetDetents({ collapsedOffset, onClose, onDetent, visible = true, startExpanded = false }) {
   const offsetY = useRef(new Animated.Value(startExpanded ? 0 : collapsedOffset)).current;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  // Told which detent the card is heading to ('expanded' | 'collapsed') so
+  // the sheet can restyle for it (a full-screen sheet drops its corners).
+  const onDetentRef = useRef(onDetent);
+  onDetentRef.current = onDetent;
   const collapsedRef = useRef(collapsedOffset);
   collapsedRef.current = collapsedOffset;
   const expandedRef = useRef(startExpanded);
@@ -88,8 +92,8 @@ export function useSheetDetents({ collapsedOffset, onClose, visible = true, star
     Animated.spring(offsetY, { toValue: to, velocity, useNativeDriver: true, bounciness: 3 }).start();
   }, [offsetY]);
 
-  const expand = useCallback(() => { expandedRef.current = true; settle(0); }, [settle]);
-  const collapse = useCallback(() => { expandedRef.current = false; settle(collapsedRef.current); }, [settle]);
+  const expand = useCallback(() => { expandedRef.current = true; onDetentRef.current?.('expanded'); settle(0); }, [settle]);
+  const collapse = useCallback(() => { expandedRef.current = false; onDetentRef.current?.('collapsed'); settle(collapsedRef.current); }, [settle]);
   const close = useCallback(() => {
     Animated.timing(offsetY, { toValue: SCREEN_H, duration: 200, useNativeDriver: true }).start(({ finished }) => {
       if (finished) onCloseRef.current?.();
@@ -114,8 +118,8 @@ export function useSheetDetents({ collapsedOffset, onClose, visible = true, star
         const offset = Math.max(0, startRef.current + g.dy);
         const verdict = decideDetent({ offset, vy: g.vy, collapsedOffset: collapsedRef.current });
         if (verdict === 'close') close();
-        else if (verdict === 'expand') { expandedRef.current = true; settle(0, g.vy); }
-        else { expandedRef.current = false; settle(collapsedRef.current, g.vy); }
+        else if (verdict === 'expand') { expandedRef.current = true; onDetentRef.current?.('expanded'); settle(0, g.vy); }
+        else { expandedRef.current = false; onDetentRef.current?.('collapsed'); settle(collapsedRef.current, g.vy); }
       },
       onPanResponderTerminate: () => {
         settle(expandedRef.current ? 0 : collapsedRef.current);
