@@ -2435,7 +2435,9 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
       const index = viewerSourceItemsRef.current.findIndex(i => i.id === item.id);
       setViewerSoloItem(index !== -1 ? null : item);
       setViewerInitialIndex(index !== -1 ? index : 0);
-      setViewerOrigin(origin ? { x: origin.x, y: origin.y } : null);
+      // A cell rect (centre + size) when the grid measured one, a bare tap
+      // point otherwise; PhotoViewer grows the photo out of it either way.
+      setViewerOrigin(origin ? { x: origin.x, y: origin.y, width: origin.width, height: origin.height } : null);
       setSelectedMedia(item);
     };
 
@@ -2454,6 +2456,28 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
       executeOpen();
     }
   }, []);
+
+  // Mounted grid cells register their native view here (GridItem effect), so
+  // the viewer can measure where the photo it is closing on sits in the grid
+  // and fly back into it — iOS Photos' shared-element close. A cell recycled
+  // off-screen simply answers null and the viewer shrinks in place instead.
+  const cellRefsRef = useRef(new Map());
+  const registerCell = useCallback((id, ref) => {
+    if (ref) cellRefsRef.current.set(id, ref);
+    else cellRefsRef.current.delete(id);
+  }, []);
+  const measureCell = useCallback((id) => new Promise((resolve) => {
+    const ref = cellRefsRef.current.get(id);
+    const node = ref && ref.current;
+    if (!node || typeof node.measureInWindow !== 'function') { resolve(null); return; }
+    try {
+      node.measureInWindow((x, y, w, h) => {
+        resolve(w > 0 && h > 0 ? { x: x + w / 2, y: y + h / 2, width: w, height: h } : null);
+      });
+    } catch {
+      resolve(null);
+    }
+  }), []);
 
   // PhotoViewer has finished its close animation: drop the viewer state. The
   // Modal hides on the next render.
@@ -3290,10 +3314,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
           isActiveVideo={GRID_VIDEO_PREVIEW && activeVideoIdRef.current === item.id}
           // Pinch-to-zoom columns: cell edge tracks the live column count.
           cellSize={width / gridCols - 0.5}
+          registerCell={registerCell}
         />
       </View>
     );
-  }, [activeTab, openViewer, handleDelete, getFullUrl, getBaseUrl, styles, theme, isSelectMode, handleSelectPress, onCellTouchDown, gridCols]);
+  }, [activeTab, openViewer, handleDelete, getFullUrl, getBaseUrl, styles, theme, isSelectMode, handleSelectPress, onCellTouchDown, gridCols, registerCell]);
 
   // Identity changes exactly when selection state does — drives the lists'
   // extraData (see the contract on renderItem above). gridCols rides along so a
@@ -3546,6 +3571,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
           onShare={handleShare}
           onEditImage={openImageEditor}
           onClosed={handleViewerClosed}
+          measureCell={measureCell}
           theme={theme}
           insets={insets}
           bottomInset={tabBarH + 20}
@@ -5176,7 +5202,16 @@ const GridVideoPreview = ({ uri }) => {
   );
 };
 
-const GridItem = React.memo(({ item, openViewer, handleDelete, getFullUrl, getBaseUrl, activeTab, styles, theme, isSelectMode, isSelected, onToggleSelect, gridIndex, onTouchDown, isActiveVideo, cellSize }) => {
+const GridItem = React.memo(({ item, openViewer, handleDelete, getFullUrl, getBaseUrl, activeTab, styles, theme, isSelectMode, isSelected, onToggleSelect, gridIndex, onTouchDown, isActiveVideo, cellSize, registerCell }) => {
+  // The cell's native view, for the viewer's open-from / fly-back-into-this-
+  // tile animation. Registered while mounted so the viewer can measure the
+  // cell of whichever photo it is closing on.
+  const cellRef = useRef(null);
+  useEffect(() => {
+    if (!registerCell || item.isSkeleton || !item.id) return undefined;
+    registerCell(item.id, cellRef);
+    return () => registerCell(item.id, null);
+  }, [registerCell, item.id, item.isSkeleton]);
   // UNIFIED CELL: a slot renders the SAME component before and after its data
   // arrives — no early-return into a separate skeleton component. The old
   // early return also sat ABOVE the hooks (conditional hooks!), which is the
@@ -5307,6 +5342,7 @@ const GridItem = React.memo(({ item, openViewer, handleDelete, getFullUrl, getBa
 
   return (
     <TouchableOpacity
+      ref={cellRef}
       disabled={isSkeleton}
       // Stable hook for the batch-share E2E flow (.maestro/batch-share.yaml).
       testID={isSkeleton ? undefined : `gallery-cell-${gridIndex}`}
@@ -5317,12 +5353,22 @@ const GridItem = React.memo(({ item, openViewer, handleDelete, getFullUrl, getBa
         { backgroundColor: cellBase },
         isSelectMode && isSelected && { opacity: 0.8 },
       ]}
-      onPress={(e) => isSelectMode
-        ? onToggleSelect(item.id, gridIndex)
-        // Tap point (window coords) anchors the viewer's pop at this cell.
-        // pageX/pageY are physical screen coords, so the mirrored grid
-        // transform doesn't distort them.
-        : openViewer(item, { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY })}
+      onPress={(e) => {
+        if (isSelectMode) { onToggleSelect(item.id, gridIndex); return; }
+        // The viewer grows out of THIS tile: measure the cell's window rect
+        // (a bounding box — the mirrored grid transform leaves it intact) and
+        // hand over centre + size. Falls back to the bare tap point if the
+        // measurement fails, which still anchors the pop here.
+        const tap = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+        const node = cellRef.current;
+        if (node && typeof node.measureInWindow === 'function') {
+          node.measureInWindow((x, y, w, h) => {
+            openViewer(item, w > 0 && h > 0 ? { x: x + w / 2, y: y + h / 2, width: w, height: h } : tap);
+          });
+        } else {
+          openViewer(item, tap);
+        }
+      }}
       onPressIn={(e) => onTouchDown?.(gridIndex, e.nativeEvent.pageX, e.nativeEvent.pageY)}
       onLongPress={() => !isSelectMode && handleDelete(item.id)}
       activeOpacity={0.8}

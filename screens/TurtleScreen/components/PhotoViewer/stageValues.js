@@ -42,6 +42,8 @@ export function useStageValues(width, height) {
   /** Tap origin offset from screen centre — where the pop grows from. */
   const originX = useSharedValue(0);
   const originY = useSharedValue(0);
+  /** The stage's scale at openProgress 0: the grid cell's size over the photo's. */
+  const originScale = useSharedValue(0.85);
   /** 1 for a photo, 0 for a video (no pinch / double-tap). */
   const zoomEnabled = useSharedValue(1);
   /** Zoom ceiling for the active photo (from its source pixels). */
@@ -51,7 +53,7 @@ export function useStageValues(width, height) {
   // geometry — and the geometry is fixed for the viewer's life.
   return useMemo(() => ({
     pagerX, activeIndex, zoomIndex, scale, tx, ty, dragX, dragY, openProgress, settling, count,
-    aspect, chrome, originX, originY, zoomEnabled, maxScale,
+    aspect, chrome, originX, originY, originScale, zoomEnabled, maxScale,
     pageW: width + GUTTER,
     width,
     height,
