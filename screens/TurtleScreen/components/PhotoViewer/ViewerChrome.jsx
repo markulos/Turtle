@@ -59,11 +59,15 @@ export function formatClock(seconds) {
  * scrub. While the finger is down the thumb follows the finger, not the
  * player, so a laggy seek can't make it stutter backwards.
  */
-function VideoScrubber({ currentTime, duration, onSeek }) {
+/** Seeks while the finger moves are rate-limited to this. */
+const SEEK_THROTTLE_MS = 90;
+
+function VideoScrubber({ currentTime, duration, onSeek, onScrubStart, onScrubEnd }) {
   const [trackW, setTrackW] = useState(0);
   const [scrubRatio, setScrubRatio] = useState(null);
   const trackWRef = useRef(0);
   trackWRef.current = trackW;
+  const throttleRef = useRef({ timer: null, pending: null, last: 0 });
 
   const ratioAt = useCallback((locationX) => {
     const w = trackWRef.current;
@@ -71,9 +75,33 @@ function VideoScrubber({ currentTime, duration, onSeek }) {
     return Math.min(1, Math.max(0, locationX / w));
   }, []);
 
-  const seekTo = useCallback((ratio) => {
+  const seekNow = useCallback((ratio) => {
     if (duration > 0) onSeek?.(ratio * duration);
   }, [duration, onSeek]);
+
+  // The thumb tracks the finger every frame; the PLAYER hears about it a few
+  // times a second, and always the latest position. Flooding it with seeks
+  // was the jitter.
+  const seekThrottled = useCallback((ratio) => {
+    const t = throttleRef.current;
+    t.pending = ratio;
+    if (t.timer) return;
+    const wait = Math.max(0, SEEK_THROTTLE_MS - (Date.now() - t.last));
+    t.timer = setTimeout(() => {
+      t.timer = null;
+      t.last = Date.now();
+      if (t.pending != null) { seekNow(t.pending); t.pending = null; }
+    }, wait);
+  }, [seekNow]);
+
+  const finish = useCallback((ratio) => {
+    const t = throttleRef.current;
+    if (t.timer) { clearTimeout(t.timer); t.timer = null; }
+    t.pending = null;
+    if (ratio != null) seekNow(ratio);
+    setScrubRatio(null);
+    onScrubEnd?.();
+  }, [seekNow, onScrubEnd]);
 
   const played = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
   const shown = scrubRatio == null ? played : scrubRatio;
@@ -87,10 +115,10 @@ function VideoScrubber({ currentTime, duration, onSeek }) {
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onResponderTerminationRequest={() => false}
-        onResponderGrant={(e) => { const r = ratioAt(e.nativeEvent.locationX); setScrubRatio(r); seekTo(r); }}
-        onResponderMove={(e) => { const r = ratioAt(e.nativeEvent.locationX); setScrubRatio(r); seekTo(r); }}
-        onResponderRelease={(e) => { const r = ratioAt(e.nativeEvent.locationX); seekTo(r); setScrubRatio(null); }}
-        onResponderTerminate={() => setScrubRatio(null)}
+        onResponderGrant={(e) => { onScrubStart?.(); const r = ratioAt(e.nativeEvent.locationX); setScrubRatio(r); seekThrottled(r); }}
+        onResponderMove={(e) => { const r = ratioAt(e.nativeEvent.locationX); setScrubRatio(r); seekThrottled(r); }}
+        onResponderRelease={(e) => { finish(ratioAt(e.nativeEvent.locationX)); }}
+        onResponderTerminate={() => { finish(null); }}
         accessibilityRole="adjustable"
         accessibilityLabel="Video position"
         testID="viewer-scrubber-track"
@@ -120,6 +148,8 @@ function ViewerChrome({
   onTogglePlay,
   onToggleMute,
   onSeek,
+  onScrubStart,
+  onScrubEnd,
 }) {
   const fade = useAnimatedStyle(() => ({
     opacity: sv.openProgress.value * sv.chrome.value * dismissChrome(sv.dragY.value),
@@ -159,7 +189,13 @@ function ViewerChrome({
         testID="viewer-chrome-bottom"
       >
         {isVideo && !!video && (
-          <VideoScrubber currentTime={video.currentTime || 0} duration={video.duration || 0} onSeek={onSeek} />
+          <VideoScrubber
+            currentTime={video.currentTime || 0}
+            duration={video.duration || 0}
+            onSeek={onSeek}
+            onScrubStart={onScrubStart}
+            onScrubEnd={onScrubEnd}
+          />
         )}
         <View style={styles.bottomRow} pointerEvents="box-none">
           <View style={styles.meta} pointerEvents="none">

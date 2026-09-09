@@ -30,20 +30,31 @@ import {
   View,
 } from 'react-native';
 
+import { BlurView } from 'expo-blur';
+
 import { useSheetDismiss } from '../../../../utils/useSheetDismiss';
 
 const SCREEN_H = Dimensions.get('window').height || 900;
 const ENTER_MS = 240;
 const EXIT_MS = 200;
 
+/**
+ * The dark variant is a white-on-black surface (docs/STYLE-RULES.md): a
+ * blurred, tinted black card, white text, and PILLS that invert — white
+ * with black text — so a chip is never "a slightly different dark on dark".
+ */
 export const DARK_SHEET = {
-  card: 'rgba(18, 18, 20, 0.86)',
+  card: 'rgba(10, 10, 12, 0.55)',
   textPrimary: '#ffffff',
-  textSecondary: 'rgba(255,255,255,0.65)',
-  textMuted: 'rgba(255,255,255,0.4)',
-  border: 'rgba(255,255,255,0.16)',
-  handle: 'rgba(255,255,255,0.35)',
-  surface: 'rgba(255,255,255,0.1)',
+  textSecondary: 'rgba(255,255,255,0.7)',
+  textMuted: 'rgba(255,255,255,0.45)',
+  border: 'rgba(255,255,255,0.18)',
+  handle: 'rgba(255,255,255,0.4)',
+  surface: 'rgba(255,255,255,0.12)',
+  chip: '#ffffff',
+  chipText: '#000000',
+  chipGhostBorder: 'rgba(255,255,255,0.45)',
+  chipGhostText: '#ffffff',
 };
 
 export function sheetColors(theme, dark) {
@@ -51,7 +62,7 @@ export function sheetColors(theme, dark) {
   if (dark) {
     return {
       ...DARK_SHEET,
-      primary: c.primary || '#3b82f6',
+      primary: '#ffffff',
       background: '#000',
     };
   }
@@ -65,6 +76,10 @@ export function sheetColors(theme, dark) {
     surface: c.surface || 'rgba(255,255,255,0.08)',
     primary: c.primary || '#3b82f6',
     background: c.background || '#000',
+    chip: c.primary || '#3b82f6',
+    chipText: c.background || '#000',
+    chipGhostBorder: c.border || 'rgba(255,255,255,0.2)',
+    chipGhostText: c.textPrimary || '#fff',
   };
 }
 
@@ -124,12 +139,24 @@ export default function ViewerSheet({
         // keyboard's padding shrinks the card rather than shoving its header
         // off the top of the screen.
         keyboard ? { maxHeight: cardHeight } : { height: cardHeight },
-        { backgroundColor: colors.card },
+        { backgroundColor: dark ? 'transparent' : colors.card },
         { transform: [{ translateY: enter }] },
       ]}
       {...panHandlers}
       testID={testID ? `${testID}-card` : undefined}
     >
+      {/* Dark variant: frosted black — the photo shows through, blurred, under a
+          tint that keeps white text legible. Android gets the software blur. */}
+      {dark && (
+        <BlurView
+          intensity={55}
+          tint="dark"
+          experimentalBlurMethod="dimezisBlurView"
+          style={StyleSheet.absoluteFillObject}
+          pointerEvents="none"
+        />
+      )}
+      {dark && <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.card }]} pointerEvents="none" />}
       {/* Nested transforms compose: the entrance on the outer view, the drag on this one. */}
       <Animated.View style={[styles.cardInner, sheetDragStyle]}>
         <View style={[styles.handle, { backgroundColor: colors.handle }]} />

@@ -42,8 +42,13 @@ import { dismissScale, pageTranslate } from '../../../../utils/viewerGestureMath
 import { containSize } from '../../../../utils/zoomMath';
 import { useHdReady, useIsActive } from './stores';
 
-/** The last stretch of the pop over which the picture fades in / out. */
-const FADE_SPAN = 0.35;
+/**
+ * The last stretch of the pop over which the picture fades. Small on purpose:
+ * the photo must ARRIVE on its tile fully opaque and only then hand over to
+ * the thumbnail underneath — fading earlier reads as the picture dissolving
+ * in mid-air. (0.12 of a swift ease-out curve is the final few frames.)
+ */
+const FADE_SPAN = 0.12;
 /** Seconds between the player's time reports while a video is active. */
 const TIME_UPDATE_INTERVAL = 0.25;
 
@@ -180,6 +185,9 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls, onV
   const [state, setState] = useState({ playing: false, muted: true, currentTime: 0, duration: 0 });
   const stateRef = useRef(state);
   stateRef.current = state;
+  // While the scrubber's finger is down: playback paused, the player's own
+  // time reports ignored (they would fight the finger), and whether to resume.
+  const scrubRef = useRef({ active: false, resume: false });
 
   useEffect(() => {
     if (isActive) {
@@ -204,6 +212,7 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls, onV
         setState((s) => (s.muted === muted ? s : { ...s, muted }));
       }),
       player.addListener('timeUpdate', (e) => {
+        if (scrubRef.current.active) return;
         const currentTime = Number.isFinite(e?.currentTime) ? e.currentTime : 0;
         const duration = Number.isFinite(player.duration) ? player.duration : 0;
         setState((s) => ({ ...s, currentTime, duration }));
@@ -250,6 +259,20 @@ const VideoBody = React.memo(({ item, isActive, getFullUrl, onVideoControls, onV
         const t = Math.min(Math.max(0, seconds), duration > 0 ? duration : seconds);
         player.currentTime = t;
         setState((s) => ({ ...s, currentTime: t }));
+      },
+      // iOS pauses while you scrub and resumes where you let go. Seeking a
+      // playing player dozens of times a second is what made the timeline
+      // jump: every seek restarted decoding and reported stale times back.
+      beginScrub: () => {
+        if (scrubRef.current.active) return;
+        scrubRef.current = { active: true, resume: !!player.playing };
+        if (player.playing) player.pause();
+      },
+      endScrub: () => {
+        const { active, resume } = scrubRef.current;
+        if (!active) return;
+        scrubRef.current = { active: false, resume: false };
+        if (resume) player.play();
       },
     };
     onVideoControls(item.id, controls);
