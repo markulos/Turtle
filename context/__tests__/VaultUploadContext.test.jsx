@@ -55,6 +55,10 @@ jest.mock('expo-image-manipulator', () => ({
 jest.mock('../../services/streamMultipartUpload', () => ({
   streamMultipartUpload: (...args) => mockStreamMultipartUpload(...args),
 }));
+const mockReportUploadIssue = jest.fn();
+jest.mock('../../services/uploadDiagnostics', () => ({
+  reportUploadIssue: (...args) => mockReportUploadIssue(...args),
+}));
 jest.mock('../../services/uploadNotify', () => ({
   notifyUploadComplete: jest.fn(),
   updateUploadProgress: jest.fn(),
@@ -85,14 +89,46 @@ describe('VaultUploadProvider background fan-out (phase 1)', () => {
     mockAuth = { isAuthenticated: true, token: 'token-a', authIdentity: 'sub:account-a', authGeneration: 'generation-a' };
     let n = 0;
     mockRandomUUID.mockImplementation(() => `import-${++n}`);
-    // Uploads stay OPEN until the test releases them.
-    mockStreamMultipartUpload.mockImplementation(() => new Promise(() => {}));
+    // Uploads stay OPEN until cancelled (the reconcile aborts them).
+    mockStreamMultipartUpload.mockImplementation(({ signal }) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+    }));
     global.fetch = jest.fn().mockImplementation(async (_url, init) => {
       const items = JSON.parse(init.body).items;
       return { json: async () => ({ success: true, results: items.map(() => ({ duplicate: false })) }) };
     });
   });
   afterEach(() => { jest.restoreAllMocks(); });
+
+  test('on return, items the pond already has are settled as uploaded and the batch finishes', async () => {
+    await render(
+      <VaultUploadProvider>
+        <Probe />
+      </VaultUploadProvider>
+    );
+    await act(async () => {
+      latestActions.enqueue({ assets: ['a', 'b', 'c'].map(asset), tags: [] });
+    });
+    await waitFor(() => expect(mockStreamMultipartUpload).toHaveBeenCalledTimes(2));
+    await act(async () => { appStateListener('background'); });
+    await waitFor(() => expect(mockStreamMultipartUpload).toHaveBeenCalledTimes(3));
+
+    // Time passes while the app sleeps; the pond receives all three, but the
+    // tasks' completions never reach JavaScript.
+    const realNow = Date.now;
+    const later = realNow() + 30 * 1000;
+    jest.spyOn(Date, 'now').mockImplementation(() => later);
+    global.fetch = jest.fn().mockImplementation(async (_url, init) => {
+      const items = JSON.parse(init.body).items;
+      return { json: async () => ({ success: true, results: items.map((_it, i) => ({ duplicate: true, id: `m${i}` })) }) };
+    });
+    await act(async () => { appStateListener('active'); });
+
+    await waitFor(() => expect(latestState.state.status).toBe('done'));
+    expect(latestState.state.uploaded).toBe(3);
+    expect(latestState.state.pct).toBe(100);
+    expect(mockReportUploadIssue).toHaveBeenCalledWith('inflight-reconciled', expect.objectContaining({ landed: 3 }), expect.anything());
+  });
 
   test('two at a time in the foreground; backgrounding hands the session the rest of the segment', async () => {
     await render(

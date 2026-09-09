@@ -21,6 +21,9 @@ export async function streamMultipartUpload({
   // job for the same audio). Callers that cannot tolerate a duplicate pass 1
   // and surface an explicit Retry instead.
   maxAttempts = UPLOAD_MAX_ATTEMPTS,
+  // ({ phase, idleMs, attempt }) — called when the watchdog cancels a task,
+  // so the caller can log it as a pipeline anomaly.
+  onAnomaly,
 }) {
   const cancelledError = () => new Error('Upload cancelled');
   if (signal?.aborted) throw cancelledError();
@@ -96,6 +99,7 @@ export async function streamMultipartUpload({
             console.warn(
               `[VaultUpload] ⏱ ${label} · watchdog tripped during ${phase} (idle ${Math.round(idleMs / 1000)}s)`
             );
+            try { onAnomaly?.({ phase, idleMs: Math.round(idleMs), attempt }); } catch { /* never throw from a timer */ }
             task.cancelAsync().catch(() => {});
             settle(
               reject,
