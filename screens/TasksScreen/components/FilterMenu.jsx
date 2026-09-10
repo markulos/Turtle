@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Animated,
   StyleSheet,
-  Switch,
   ScrollView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -85,23 +84,7 @@ export const FilterMenu = ({
           keyboardShouldPersistTaps="handled"
           {...scrollProps}
         >
-          {/* Incomplete Filter Toggle */}
-          <View style={styles.section}>
-            <View style={styles.toggleRow}>
-              <Text style={styles.sectionTitle}>Show Incomplete Only</Text>
-              <Switch
-                value={filters.showIncompleteOnly}
-                onValueChange={filters.setShowIncompleteOnly}
-                trackColor={{ false: theme.colors.surfaceHighlight, true: '#CCFF00' }}
-                thumbColor={filters.showIncompleteOnly ? '#FFFFFF' : theme.colors.textPrimary}
-              />
-            </View>
-            <Text style={styles.hint}>
-              {filters.showIncompleteOnly 
-                ? 'Hiding completed tasks' 
-                : 'Showing all tasks including completed'}
-            </Text>
-          </View>
+          {/* Status (to do / done / all) moved to the header — StatusSegment. */}
 
           {/* Whose tasks — shared-calendar person filter. Only meaningful when
               more than one pond member has tasks on the calendar; with a single

@@ -1,5 +1,4 @@
 export { FormField } from './FormField';
-export { ProjectDropdown, configureProjectDropdownAnimation } from './ProjectDropdown';
 export { FilterMenu } from './FilterMenu';
 export { TaskStatsModal } from './TaskStatsModal';
 export { ProjectManager } from './ProjectManager';
@@ -10,6 +9,5 @@ export { SectionHeader } from './SectionHeader';
 export { CalendarView } from './CalendarView';
 export { DatePickerModal } from './DatePickerModal';
 export { WheelTimePicker } from './WheelTimePicker';
-export { AddItemFab } from './AddItemFab';
 export { TaskQuickInspector } from './TaskQuickInspector';
 export { TimelineTaskRow, UNIFORM_ROW_H, UNIFORM_CARD_H } from './TimelineTaskRow';
