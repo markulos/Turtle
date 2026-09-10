@@ -955,7 +955,29 @@ export default function TasksScreen() {
   // own scrolling is the only driver: placeholders FILL IN-PLACE as they
   // become visible (same task-id keys, so the swap moves nothing) and the
   // layout never changes shape again. No gesture hooks, no readjustments.
-  const [pastArmed, setPastArmed] = useState(false);
+  // Armed PER SCOPE. The arm is stored as the scope key it was granted for, so
+  // the moment the scope (board / status / tags / owners / search) changes the
+  // zone reads as disarmed IN THE SAME RENDER — the list remounts (key below)
+  // with no history above Upcoming, opens at offset 0 exactly like first
+  // paint, and the preload effect re-arms it one idle beat later. Before this
+  // the zone survived a board change: the list kept a scroll offset sized for
+  // the OLD board's history while the new board's was a fraction of it, and
+  // FlashList's native position-hold anchored on a recycled cell — a screen of
+  // blank above "Upcoming" (the "massive margin" bug).
+  const agendaScopeKey = useMemo(
+    () => JSON.stringify([selectedProject, statusFilter, selectedTags, tagFilterMode, selectedOwners, searchQuery]),
+    [selectedProject, statusFilter, selectedTags, tagFilterMode, selectedOwners, searchQuery],
+  );
+  const [pastArmedKey, setPastArmedKey] = useState(null);
+  const pastArmed = pastArmedKey === agendaScopeKey;
+  const setPastArmed = useCallback((v) => setPastArmedKey(v ? agendaScopeKey : null), [agendaScopeKey]);
+  // A scope change also drops the "viewing history" pill and any fill lock.
+  useEffect(() => {
+    setViewingPast(false);
+    growReadyRef.current = true;
+    placeholderVisibleRef.current = false;
+    scrollY.current = 0;
+  }, [agendaScopeKey]);
   // One upward batch in flight at a time. Cleared when a grow is dispatched,
   // re-armed once the new slice actually commits — scrollEventThrottle floods
   // the near-top zone with events, and without this every frame would stack
@@ -2140,6 +2162,10 @@ export default function TasksScreen() {
               no-op; wire a new entry point here if search comes back. */}
           <View style={styles.listShift}>
           <FlashList
+            // Remount per scope: a fresh list opens on Upcoming at offset 0
+            // (see agendaScopeKey) instead of inheriting the previous scope's
+            // offset + position-hold anchor.
+            key={agendaScopeKey}
             ref={listRef}
             data={agenda.items}
             keyExtractor={(item, index) => (item ? `${item.__past ? 'past-' : ''}${item.__upcoming ? 'upcoming-' : ''}${item.id || index}` : `cell-${index}`)}
