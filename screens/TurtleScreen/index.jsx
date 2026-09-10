@@ -43,6 +43,7 @@ import { useServer } from '../../context/ServerContext';
 import { useAuth } from '../../context/AuthContext';
 import AnimalAvatar from '../../components/AnimalAvatar';
 import TypingIndicator from '../../components/TypingIndicator';
+import MarkdownText from '../../components/MarkdownText';
 import { generatedName } from '../../utils/avatar';
 import { useCommandBus } from '../../context/CommandBusContext';
 import { useOpenTarget } from '../../context/OpenTargetContext';
@@ -117,6 +118,10 @@ const DEBUG_TOGGLE_HEIGHT = 44;
 // under the header: the gap above the Claude console read wider than the one
 // below it, even though both are one PANEL_GAP by construction.
 const CHAT_HEADER_BAR_HEIGHT = 60;
+// A "swift pull down" on the transcript: at least this far, at least this fast
+// (points per millisecond — a flick, not a scroll).
+const SWIFT_PULL_MIN_DY = 48;
+const SWIFT_PULL_MIN_SPEED = 1.2;
 // (The chat header's blur bands + fade-out scrim are gone: the header is OPAQUE
 // now, so there is nothing behind it to frost and no fade to describe. Its
 // depth comes from an accent wash, a gloss and a drop shadow — see the render
@@ -262,6 +267,23 @@ export default function TurtleScreen() {
   // full screen), and (2) only while the user is moving DOWN, toward the latest
   // — scrolling up into history keeps it hidden so it never sits in the way.
   const lastChatOffsetY = useRef(0);
+  // Keyboard dismissal from the transcript: NOT the proportional "interactive"
+  // drag (any downward scroll used to start pulling the keyboard down) — the
+  // list scrolls freely with the keyboard up, and only a SWIFT pull DOWN
+  // (finger moving down fast, i.e. toward older messages) closes it.
+  const chatDragStartRef = useRef({ y: 0, t: 0 });
+  const handleChatDragBegin = useCallback((e) => {
+    chatDragStartRef.current = { y: e?.nativeEvent?.contentOffset?.y ?? 0, t: Date.now() };
+  }, []);
+  const handleChatDragEnd = useCallback((e) => {
+    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+    const { y: y0, t: t0 } = chatDragStartRef.current;
+    const dy = y0 - y; // > 0 → finger pulled DOWN
+    const dt = Math.max(1, Date.now() - t0);
+    const v = e?.nativeEvent?.velocity?.y;
+    const speed = v != null ? Math.abs(v) : dy / dt; // points per ms
+    if (dy > SWIFT_PULL_MIN_DY && speed > SWIFT_PULL_MIN_SPEED) Keyboard.dismiss();
+  }, []);
   const chatJumpingRef = useRef(false); // true during a tap-to-latest animation
   const handleChatScroll = useCallback((e) => {
     const ne = e?.nativeEvent;
@@ -1900,14 +1922,26 @@ export default function TurtleScreen() {
           />
         )}
         {textToRender ? (
-          <Text style={[
-            styles.messageText,
-            message.isWelcome ? styles.welcomeText : message.sender === 'user' ? styles.userText : styles.serverText,
-            // Re-inject padding for text if it was removed by the image container
-            extractedImage && { paddingHorizontal: 8, paddingBottom: 4 }
-          ]}>
-            {textToRender}
-          </Text>
+          message.sender === 'user' ? (
+            <Text style={[
+              styles.messageText,
+              styles.userText,
+              // Re-inject padding for text if it was removed by the image container
+              extractedImage && { paddingHorizontal: 8, paddingBottom: 4 }
+            ]}>
+              {textToRender}
+            </Text>
+          ) : (
+            // Turtle's replies carry Markdown (headings, lists, code, bold…);
+            // render it instead of showing the raw markers.
+            <View style={extractedImage ? { paddingHorizontal: 8, paddingBottom: 4 } : null}>
+              <MarkdownText
+                text={textToRender}
+                theme={theme}
+                style={[styles.messageText, message.isWelcome ? styles.welcomeText : styles.serverText]}
+              />
+            </View>
+          )
         ) : null}
         {!message.isWelcome && (
           <Text style={[
@@ -2645,8 +2679,13 @@ export default function TurtleScreen() {
         //   - "handled" persistence ensures taps on TouchableOpacity (avatars,
         //     the autocomplete suggestions, etc.) still register, while taps
         //     on plain message background dismiss the keyboard.
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        // 'none': the transcript scrolls freely with the keyboard up. A swift
+        // pull DOWN closes it (handleChatDragEnd); a tap on the background
+        // still does ("handled" persistence keeps taps on rows alive).
+        keyboardDismissMode="none"
         keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={handleChatDragBegin}
+        onScrollEndDrag={handleChatDragEnd}
         onScroll={handleChatScroll}
         scrollEventThrottle={16}
         data={chronologicalMessages}

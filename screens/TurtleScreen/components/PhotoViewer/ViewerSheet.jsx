@@ -121,6 +121,13 @@ export default function ViewerSheet({
   const scrim = useRef(new Animated.Value(0)).current;
   const lift = useRef(new Animated.Value(0)).current;
   const [kb, setKb] = useState(0);
+  // Whether the keyboard actually made the sheet move. RULE: if the keyboard
+  // does not cover the field it opened for, nothing on screen changes size or
+  // place — the body just gains bottom padding so what sits under the
+  // keyboard can still be scrolled to. It only expands + lifts when the top
+  // bar (where every input of these sheets lives) would be covered.
+  const [lifted, setLifted] = useState(false);
+  const topBarRef = useRef(null);
   const [expanded, setExpanded] = useState(false);
   const onDetent = useCallback((d) => setExpanded(d === 'expanded'), []);
 
@@ -148,13 +155,27 @@ export default function ViewerSheet({
     const onShow = (e) => {
       const h = e?.endCoordinates?.height || 0;
       const ms = Platform.OS === 'ios' ? (e?.duration || 250) : 180;
-      setKb(h);
-      expand();
-      Animated.timing(lift, { toValue: -h, duration: ms, easing: Easing.bezier(0.38, 0.7, 0.125, 1), useNativeDriver: true }).start();
+      const keyboardTop = SCREEN_H - h;
+      const moveUp = () => {
+        setKb(h);
+        setLifted(true);
+        expand();
+        Animated.timing(lift, { toValue: -h, duration: ms, easing: Easing.bezier(0.38, 0.7, 0.125, 1), useNativeDriver: true }).start();
+      };
+      const stayPut = () => { setKb(h); setLifted(false); };
+      const node = topBarRef.current;
+      if (!node || typeof node.measureInWindow !== 'function') { moveUp(); return; }
+      node.measureInWindow((x, y, w, hh) => {
+        // Covered = the field's bottom edge (plus a little breathing room)
+        // sits below the keyboard's top edge.
+        const covered = !(hh > 0) || (y + hh + 12) > keyboardTop;
+        if (covered) moveUp(); else stayPut();
+      });
     };
     const onHide = (e) => {
       const ms = Platform.OS === 'ios' ? (e?.duration || 250) : 180;
       setKb(0);
+      setLifted(false);
       Animated.timing(lift, { toValue: 0, duration: ms, easing: Easing.bezier(0.38, 0.7, 0.125, 1), useNativeDriver: true }).start();
     };
     const s1 = Keyboard.addListener(showEvt, onShow);
@@ -182,7 +203,7 @@ export default function ViewerSheet({
   const colors = sheetColors(theme, dark);
   // With the keyboard up the card is expanded and lifted; cap it so its top
   // still clears the status bar.
-  const cardHeight = kb > 0 ? Math.min(expandedH, SCREEN_H - kb - insets.top - 8) : expandedH;
+  const cardHeight = (kb > 0 && lifted) ? Math.min(expandedH, SCREEN_H - kb - insets.top - 8) : expandedH;
 
   return (
     <View style={[StyleSheet.absoluteFill, styles.root]} testID={testID}>
@@ -238,10 +259,12 @@ export default function ViewerSheet({
                 </View>
               </Pressable>
             </View>
-            {topBar}
+            <View ref={topBarRef} collapsable={false}>{topBar}</View>
             <ScrollView
               style={styles.body}
-              contentContainerStyle={[styles.bodyContent, { paddingBottom: 24 + Math.max(insets.bottom, bottomInset) }]}
+              // Keyboard up but the sheet stayed put → pad the body by the
+              // keyboard so the tail of the list is still reachable.
+              contentContainerStyle={[styles.bodyContent, { paddingBottom: 24 + Math.max(insets.bottom, bottomInset) + (kb > 0 && !lifted ? kb : 0) }]}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator
