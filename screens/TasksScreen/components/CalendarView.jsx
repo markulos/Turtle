@@ -49,7 +49,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../../context/ThemeContext';
 import { formatDueDate, isOverdue, itemTypeOf, itemColorOf, itemIconOf, taskPassesFilters, matchesRecurrence, isOccurrenceCompleted, parseLocalYMD } from '../utils/taskHelpers';
 import { TaskQuickInspector } from './TaskQuickInspector';
-import ScheduleCard, { clockLabel } from './ScheduleCard';
+import ScheduleCard, { clockLabel, buildCondensedRows } from './ScheduleCard';
 import { HatchBackdrop } from './HatchBackdrop';
 import { TaskSectionFrontier, DAY_SECTION_FIRST_PAINT } from './TaskSectionFrontier';
 import { WheelTimePicker } from './WheelTimePicker';
@@ -1057,37 +1057,47 @@ const DayPane = React.memo(function DayPane({
               <Text style={styles.collapsedEmpty}>
                 No timed tasks yet. Tap + above, or expand to the timeline and long-press a slot.
               </Text>
-            ) : segments.map((seg) => {
-              // A planner row: the start time in the left column, a soft card
-              // washed in the board colour, the range bottom-right, an empty-
-              // time gap as a dashed rule with its duration.
-              const hasGap = seg.gapAfter != null && seg.gapAfter > 0;
+            ) : buildCondensedRows(segments).map((row) => {
+              // The condensed hour timeline: every hour from the first task
+              // to the last task's end gets a row — a card on the hour a task
+              // starts (it stands for the hours it covers), a dashed line for
+              // a free hour, one "free" row for a long empty stretch.
+              if (row.kind === 'empty') {
+                return (
+                  <View key={`h-${row.minute}`} style={styles.condRow}>
+                    <Text style={styles.condLabel} numberOfLines={1}>{clockLabel(row.minute, use24h)}</Text>
+                    <View style={styles.condDash} />
+                  </View>
+                );
+              }
+              if (row.kind === 'free') {
+                return (
+                  <View key={`free-${row.minute}`} style={styles.condRow}>
+                    <Text style={styles.condLabel} numberOfLines={1}>{clockLabel(row.minute, use24h)}</Text>
+                    <View style={styles.condDash} />
+                    <Text style={styles.condFree} numberOfLines={1}>{fmtDur(row.minutes)} free</Text>
+                    <View style={styles.condDash} />
+                  </View>
+                );
+              }
+              const { seg } = row;
               const done = seg.task.completed || isOccurrenceCompleted(seg.task, dayStr);
               return (
-                <React.Fragment key={seg.task.id}>
-                  <ScheduleCard
-                    task={seg.task}
-                    theme={theme}
-                    timeLabel={clockLabel(seg.start, use24h)}
-                    range={`${clockLabel(seg.start, use24h)} – ${clockLabel(seg.end, use24h)}`}
-                    color={seg.task.project ? getProjectColor(seg.task.project) : null}
-                    done={done}
-                    onPress={onTaskInspect || onTaskPress}
-                    onLongPress={onTaskLongPress}
-                    onToggle={(it) => onToggleComplete?.(it.id, dayStr)}
-                    owner={multiUser && seg.task.userId ? { name: seg.task.ownerName || 'Unknown', color: ownerColor(seg.task.userId) } : null}
-                    onOwnerPress={onOwnerPress}
-                    testID={`schedule-card-${seg.task.id}`}
-                  />
-                  {hasGap && (
-                    <View style={styles.segGap}>
-                      <View style={styles.segGapSpacer} />
-                      <View style={styles.segGapLine} />
-                      <Text style={styles.segGapText}>{fmtDur(seg.gapAfter)}</Text>
-                      <View style={styles.segGapLine} />
-                    </View>
-                  )}
-                </React.Fragment>
+                <ScheduleCard
+                  key={seg.task.id}
+                  task={seg.task}
+                  theme={theme}
+                  timeLabel={clockLabel(seg.start, use24h)}
+                  range={`${clockLabel(seg.start, use24h)} – ${clockLabel(seg.end, use24h)}`}
+                  color={seg.task.project ? getProjectColor(seg.task.project) : null}
+                  done={done}
+                  onPress={onTaskInspect || onTaskPress}
+                  onLongPress={onTaskLongPress}
+                  onToggle={(it) => onToggleComplete?.(it.id, dayStr)}
+                  owner={multiUser && seg.task.userId ? { name: seg.task.ownerName || 'Unknown', color: ownerColor(seg.task.userId) } : null}
+                  onOwnerPress={onOwnerPress}
+                  testID={`schedule-card-${seg.task.id}`}
+                />
               );
             })}
           </Reanimated.View>
@@ -3650,6 +3660,36 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     gap: 8,
+  },
+  // One free hour on the condensed timeline: the hour in the time column,
+  // a dashed rule across the card column.
+  condRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 28,
+    marginBottom: 4,
+    gap: 8,
+  },
+  condLabel: {
+    width: 62,
+    paddingRight: 8,
+    fontSize: 12,
+    fontWeight: '400',
+    color: theme.colors.textTertiary,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.2,
+  },
+  condDash: {
+    flex: 1,
+    height: 0,
+    borderTopWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.borderStrong || theme.colors.border,
+  },
+  condFree: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: theme.colors.textTertiary,
   },
   segGapLine: {
     flex: 1,
