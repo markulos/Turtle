@@ -44,10 +44,12 @@ repo skill (loaded before any UI work) and by review.
   hours it covers), a dashed rule with the hour label for a free hour, one "Nh free" row for a stretch longer
   than three free hours. The panel header is ONE
   line: "Task Schedule" (26 / 600) with the date beside it (12 / 300, 50 % opacity) — no hint text, no count.
-  The panel's SURFACE is the desktop pomodoro stat tile: base #ECEEF2 (light) / #161719 (dark), 1 px border
-  rgba(0,0,0,.08) / .45, a top-to-bottom gradient overlay (rgba(0,0,0,.04)→rgba(255,255,255,.6) light;
-  .18→.015 dark), a 6 pt inset shade along the top rim, a 1 px light line at the bottom; nothing inside the
-  panel paints a flat surface over it. A pinned bar lifted onto the keyboard keeps 12 pt of air above it.
+  The panel's SURFACE is the chat composer's FROST (`utils/frostedChat`: BlurView intensity 85 + the
+  frost tint rgba(250,250,252,.5) light / rgba(20,20,22,.4) dark, a top hairline only) — transparent, the
+  calendar reads through it; nothing inside the panel paints a flat surface over it. NEVER give a full-width
+  sheet side borders: the day pager pages are SCREEN_W wide and pagingEnabled snaps to the VIEWPORT width,
+  so 1 px of side border drifts 2 px per page (hundreds of pages in = a visible offset). A pinned bar lifted
+  onto the keyboard keeps 12 pt of air above it.
 - TYPEFACE: Figtree, app-wide, installed once at startup (`utils/installFont` → `utils/fonts.js`
   `installGlobalFont`): every Text / TextInput gets the Figtree face for its `fontWeight` — write weights
   as usual, never a `fontFamily` (an explicit family is left alone: icon glyphs, monospace consoles).
