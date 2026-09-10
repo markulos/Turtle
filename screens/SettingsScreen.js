@@ -1570,18 +1570,25 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 8,
   },
+  // STYLE-RULES §2: the text column shrinks and wraps; it never pushes the
+  // switch / value on its right off the row.
   settingInfo: {
     flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    paddingRight: 12,
   },
   settingLabel: {
     fontSize: 16,
     fontWeight: '600',
     color: theme.colors.textPrimary,
     marginBottom: 2,
+    flexShrink: 1,
   },
   settingDescription: {
     fontSize: 13,
     color: theme.colors.textTertiary,
+    flexShrink: 1,
   },
   cacheSizeRow: {
     flexDirection: 'row',
@@ -1599,6 +1606,7 @@ const createStyles = (theme) => StyleSheet.create({
     color: theme.colors.textPrimary,
     fontVariant: ['tabular-nums'],
     marginLeft: 12,
+    flexShrink: 0,
   },
   statusContainer: {
     flexDirection: 'row',
@@ -1633,6 +1641,7 @@ const createStyles = (theme) => StyleSheet.create({
   statusText: {
     fontSize: 15,
     color: theme.colors.textSecondary,
+    flexShrink: 1,
   },
   label: {
     fontSize: 13,
@@ -1668,6 +1677,8 @@ const createStyles = (theme) => StyleSheet.create({
     marginBottom: 16,
   },
   primaryButton: {
+    flexShrink: 1,
+    maxWidth: '100%',
     flexDirection: 'row',
     backgroundColor: theme.colors.surfaceElevated,
     height: 44,
@@ -1682,8 +1693,11 @@ const createStyles = (theme) => StyleSheet.create({
     color: theme.colors.textPrimary,
     fontSize: 15,
     fontWeight: '700',
+    flexShrink: 1,
   },
   secondaryButton: {
+    flexShrink: 1,
+    maxWidth: '100%',
     flexDirection: 'row',
     backgroundColor: theme.colors.surfaceHighlight,
     height: 44,
@@ -1698,6 +1712,7 @@ const createStyles = (theme) => StyleSheet.create({
     color: theme.colors.textPrimary,
     fontSize: 15,
     fontWeight: '600',
+    flexShrink: 1,
   },
   dangerButton: {
     flexDirection: 'row',
