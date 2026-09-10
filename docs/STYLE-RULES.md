@@ -22,9 +22,10 @@ repo skill (loaded before any UI work) and by review.
   `experimentalBlurMethod="dimezisBlurView"` for Android) under an `rgba(10,10,12,.5–.6)` tint so
   white text stays legible whatever is behind it.
 
-- TASK CARDS are INSET panels (`screens/TasksScreen/utils/cardPalette.js`): a surface one step BELOW the page
-  (dark: #0E0E10 on black; light: #F3F3F5 on white), radius 16, a hairline rim a touch lighter than the panel with
-  the TOP edge lit a little more (`edge` / `edgeTop`) — the light catching a recess. No drop shadow. Inside:
+- TASK CARDS are INSET DARK panels (`screens/TasksScreen/utils/cardPalette.js`) in BOTH modes: charcoal, never
+  pitch black (light page: #1F2024; dark page: #17171A, a step above the black), white title, lighter captions,
+  radius 16, a hairline rim a touch lighter than the panel with the TOP edge lit a little more (`edge` /
+  `edgeTop`) — the light catching a recess. No drop shadow. Inside:
   bold value, muted caption, small icon TILE (`tile`) — the Teenage-Engineering / Scandinavian read of the
   reference tile. Everything drawn inside the card (badges, sub-lines, progress tracks, inline inputs) takes
   its colour from that palette, never from the theme's page tokens. Completion rings are full-contrast
