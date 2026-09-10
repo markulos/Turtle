@@ -19,7 +19,7 @@ import { tapHaptic, impactHaptic } from '../../../utils/haptics';
 import { boardLabel } from '../utils/taskHelpers';
 import { insetCardPalette } from '../utils/cardPalette';
 
-const CARD_W = 128;
+const CARD_W = 128; // minimum; a card grows to fit its whole title (capped)
 const CARD_H = 66;
 
 function BoardCard({ label, dot, stat, selected, onPress, onLongPress, pal, testID }) {
@@ -135,7 +135,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   card: {
-    width: CARD_W,
+    minWidth: CARD_W,
+    maxWidth: 240,
     height: CARD_H,
     borderRadius: 14,
     borderWidth: 1,
@@ -147,6 +148,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    alignSelf: 'flex-start',
   },
   dot: {
     width: 7,
@@ -155,6 +157,7 @@ const styles = StyleSheet.create({
   },
   label: {
     flexShrink: 1,
+    flexGrow: 0,
     fontSize: 10.5,
     fontWeight: '700',
     letterSpacing: 0.9,

@@ -1730,7 +1730,7 @@ export default function TasksScreen() {
   // swipe AND on tap — exactly like the Photos tab bar's bezier indicator,
   // instead of the old discrete active-background snap. Calendar = left page
   // (index 0), list = right page (index 1).
-  const TOGGLE_SEG_WIDTH = 40;
+  const TOGGLE_SEG_WIDTH = 84;
   const pagerWidth = pagerSize.width || windowWidth;
   const toggleIndicatorX = pagerScrollX.interpolate({
     inputRange: [0, pagerWidth],
@@ -1799,10 +1799,12 @@ export default function TasksScreen() {
             {/* Active (bright) icon fades in as this page becomes current;
                 the inactive (dim) icon underneath fades out. */}
             <Animated.View style={[styles.viewBtnIconLayer, { opacity: calActiveOp }]}>
-              <Icon name="calendar-month" size={20} color={theme.colors.textPrimary} />
+              <Icon name="calendar-month" size={16} color={theme.colors.textPrimary} />
+              <Text style={[styles.viewBtnText, { color: theme.colors.textPrimary }]} numberOfLines={1}>Calendar</Text>
             </Animated.View>
-            <Animated.View style={{ opacity: listActiveOp }}>
-              <Icon name="calendar-month" size={20} color={theme.colors.textTertiary} />
+            <Animated.View style={[styles.viewBtnRow, { opacity: listActiveOp }]}>
+              <Icon name="calendar-month" size={16} color={theme.colors.textTertiary} />
+              <Text style={[styles.viewBtnText, { color: theme.colors.textTertiary }]} numberOfLines={1}>Calendar</Text>
             </Animated.View>
           </TouchableOpacity>
           <TouchableOpacity
@@ -1814,10 +1816,12 @@ export default function TasksScreen() {
             accessibilityLabel="List view"
           >
             <Animated.View style={[styles.viewBtnIconLayer, { opacity: listActiveOp }]}>
-              <Icon name="format-list-bulleted" size={20} color={theme.colors.textPrimary} />
+              <Icon name="format-list-bulleted" size={16} color={theme.colors.textPrimary} />
+              <Text style={[styles.viewBtnText, { color: theme.colors.textPrimary }]} numberOfLines={1}>Tasks</Text>
             </Animated.View>
-            <Animated.View style={{ opacity: calActiveOp }}>
-              <Icon name="format-list-bulleted" size={20} color={theme.colors.textTertiary} />
+            <Animated.View style={[styles.viewBtnRow, { opacity: calActiveOp }]}>
+              <Icon name="format-list-bulleted" size={16} color={theme.colors.textTertiary} />
+              <Text style={[styles.viewBtnText, { color: theme.colors.textTertiary }]} numberOfLines={1}>Tasks</Text>
             </Animated.View>
           </TouchableOpacity>
         </View>
@@ -1845,7 +1849,7 @@ export default function TasksScreen() {
             )}
             <Text
               style={[styles.headerBoardText, (railOpen || selectedProject !== 'All') && styles.headerBoardTextLit]}
-              numberOfLines={1}
+              numberOfLines={2}
             >
               {selectedProject === 'All' ? 'Boards' : boardLabel(selectedProject)}
             </Text>
@@ -1857,7 +1861,7 @@ export default function TasksScreen() {
           </TouchableOpacity>
           {/* The Overview key: every board's numbers on a page over the calendar. */}
           <TouchableOpacity
-            style={[styles.headerBoardKey, showOverview && styles.headerBoardKeyLit]}
+            style={[styles.headerBoardKey, styles.headerOverviewKey, showOverview && styles.headerBoardKeyLit]}
             onPressIn={() => tapHaptic()}
             onPress={() => setShowOverview(true)}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -2299,29 +2303,6 @@ export default function TasksScreen() {
             // socket pushes, and the calendar page's pull-to-refresh.
             viewabilityConfig={viewabilityConfig}
             onViewableItemsChanged={onViewableItemsChanged}
-            // The doorway to the boards tree, at the very bottom of the
-            // agenda — the tree itself lives on its own pushed page.
-            ListFooterComponent={
-              <TouchableOpacity
-                onPressIn={() => tapHaptic()}
-                onPress={() => setBoardsPageOpen(true)}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Open all boards"
-                style={styles.allBoardsButton}
-              >
-                <FourColorBoardsIcon size={18} />
-                <Text style={styles.allBoardsButtonText}>All Boards</Text>
-                {collapsible.groupedData.filter((s) => s.type === 'project').length > 0 && (
-                  <View style={styles.allBoardsCountBadge}>
-                    <Text style={styles.allBoardsCountText}>
-                      {collapsible.groupedData.filter((s) => s.type === 'project').length}
-                    </Text>
-                  </View>
-                )}
-                <Icon name="chevron-right" size={20} color={theme.colors.textTertiary} />
-              </TouchableOpacity>
-            }
             ListEmptyComponent={(
               <View style={styles.emptyState}>
                 <Icon
@@ -2733,9 +2714,13 @@ const createStyles = (theme) => StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 6,
   },
+  // The row's keys share the width: the Boards key takes what its title
+  // needs and SHRINKS (its text wrapping to a second line) before it would
+  // push the Overview key past the edge; Overview never shrinks.
   headerKeys: {
+    flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 8,
   },
   // The rail's layer inside the content host: pinned to the top, exactly
@@ -2754,13 +2739,17 @@ const createStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    height: 32,
-    maxWidth: 132,
+    minHeight: 32,
+    paddingVertical: 6,
     paddingLeft: 10,
     paddingRight: 6,
     borderRadius: 9,
     borderWidth: 1,
     borderColor: theme.colors.borderStrong,
+    flexShrink: 1,
+  },
+  headerOverviewKey: {
+    flexShrink: 0,
   },
   headerBoardKeyLit: {
     backgroundColor: theme.colors.textPrimary,
@@ -2825,7 +2814,7 @@ const createStyles = (theme) => StyleSheet.create({
     backgroundColor: theme.colors.surface,
     borderRadius: 8,
     padding: 2,
-    marginRight: 12,
+    marginRight: 0,
     borderWidth: 0.5,
     borderColor: theme.colors.border,
     position: 'relative', // anchors the absolute sliding pill
@@ -2837,7 +2826,7 @@ const createStyles = (theme) => StyleSheet.create({
     top: 2,
     bottom: 2,
     left: 2,
-    width: 40, // = TOGGLE_SEG_WIDTH; matches a segment's width
+    width: 84, // = TOGGLE_SEG_WIDTH; matches a segment's width
     borderRadius: 6,
     // Match the Photos tab bar's pill exactly: a light fill (white on light,
     // near-grey on dark) with a soft drop shadow, so it reads as a lifted
@@ -2850,16 +2839,29 @@ const createStyles = (theme) => StyleSheet.create({
     elevation: 2,
   },
   viewBtn: {
-    width: 40, // fixed so the sliding pill aligns with each segment 1:1
-    paddingVertical: 6,
+    width: 84, // = TOGGLE_SEG_WIDTH; fixed so the sliding pill aligns 1:1
+    height: 28,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Icon + word, both layers (the active one is absolute over the dim one).
+  viewBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  viewBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   // Active (bright) icon layer, stacked over the inactive (dim) one; their
   // opacities cross-fade as the pager scrolls.
   viewBtnIconLayer: {
     ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+    gap: 5,
     alignItems: 'center',
     justifyContent: 'center',
   },
