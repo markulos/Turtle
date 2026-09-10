@@ -45,7 +45,8 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 // Navigation uses. Not on RN's public index, hence the deep import.
 import { VirtualizedListContextResetter } from 'react-native/Libraries/Lists/VirtualizedListContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import { blurProps, frostOverlayColor, frostBorderColor } from '../../../utils/frostedChat';
 import { useTheme } from '../../../context/ThemeContext';
 import { formatDueDate, isOverdue, itemTypeOf, itemColorOf, itemIconOf, taskPassesFilters, matchesRecurrence, isOccurrenceCompleted, parseLocalYMD } from '../utils/taskHelpers';
 import { TaskQuickInspector } from './TaskQuickInspector';
@@ -2677,24 +2678,12 @@ export const CalendarView = ({
           it can be dragged up/down by the finger; a plain tap still
           toggles via the TouchableOpacity onPress. */}
       <Reanimated.View style={[styles.sheet, sheetStyle]}>
-        {/* The desktop stat tile's surface: a soft top-to-bottom gradient over
-            the base fill, an inset shadow along the top rim, a hairline of
-            light at the bottom. Sections above it stay transparent. */}
-        <LinearGradient
-          pointerEvents="none"
-          colors={theme.mode === 'dark'
-            ? ['rgba(0,0,0,0.18)', 'rgba(255,255,255,0.015)']
-            : ['rgba(0,0,0,0.04)', 'rgba(255,255,255,0.6)']}
-          style={StyleSheet.absoluteFill}
-        />
-        <LinearGradient
-          pointerEvents="none"
-          colors={theme.mode === 'dark'
-            ? ['rgba(0,0,0,0.55)', 'rgba(0,0,0,0)']
-            : ['rgba(0,0,0,0.10)', 'rgba(0,0,0,0)']}
-          style={styles.sheetTopShade}
-        />
-        <View pointerEvents="none" style={[styles.sheetBottomLight, { backgroundColor: theme.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.85)' }]} />
+        {/* The chat composer's frost (utils/frostedChat): a transparent sheet
+            whose surface is a BlurView + a light translucent tint, so the
+            calendar behind reads softly through it. Sections inside stay
+            transparent. */}
+        <BlurView pointerEvents="none" style={StyleSheet.absoluteFill} {...blurProps(theme)} />
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: frostOverlayColor(theme) }]} />
         {/* Only the header is the docked "peek" (its measured height drives the
             sheet travel). The week strip lives BELOW it, so it's off-screen
             when docked and slides into view only as the sheet is brought up. */}
@@ -3236,29 +3225,19 @@ const createStyles = (theme) => StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    // The desktop stat tile's base fill (its gradient + rims are painted by
-    // the overlays at the top of the sheet).
-    backgroundColor: theme.mode === 'dark' ? '#161719' : '#ECEEF2',
+    // Transparent: the frost (BlurView + tint, painted first inside) is the
+    // surface, like the chat composer.
+    backgroundColor: 'transparent',
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: theme.mode === 'dark' ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.08)',
+    // TOP hairline only. Side borders would narrow the day pager's viewport
+    // by 2 px while its pages stay SCREEN_W wide — pagingEnabled then snaps
+    // 2 px short on every page and the error accumulates with the page
+    // index (today is hundreds of pages in): the "offset after sliding to
+    // the next day" bug.
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: frostBorderColor(theme),
     overflow: 'hidden',
-  },
-  sheetTopShade: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 6,
-  },
-  sheetBottomLight: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 1,
   },
   // Drag-handle pill centred at the top of the sheet header — the affordance
   // that says "drag me up/down". Matches the add-task card's handle (44×5,
