@@ -28,9 +28,11 @@ repo skill (loaded before any UI work) and by review.
   `edgeTop`) — the light catching a recess. No drop shadow. Inside:
   bold value, muted caption, small icon TILE (`tile`) — the Teenage-Engineering / Scandinavian read of the
   reference tile. Everything drawn inside the card (badges, sub-lines, progress tracks, inline inputs) takes
-  its colour from that palette, never from the theme's page tokens. Completion rings are full-contrast
-  against whatever they sit on (black on light, white on dark; the card's text colour inside a card), 2 pt,
-  never grey.
+  its colour from that palette, never from the theme's page tokens. Every task row's LEFT EDGE is a TIME column
+  (14 / 500, secondary ink, 62 pt + 12 pt gap: "07:00 PM", a dash when untimed) — no rail, no dot, no connector;
+  the COMPLETION RING sits INSIDE the card, overlaid on its right edge and vertically centred (22 pt; done =
+  filled with the card's text colour + a check in the card colour, not done = a 1.5 pt ring in the text colour);
+  the card reserves 46 pt on the right for it.
 
 - SCHEDULE CARDS (the calendar's day panel, `TasksScreen/components/ScheduleCard`) are the one exception to
   the charcoal card: a planner page. The TIME sits in a clear column on the LEFT ("08 AM" / "08:30 AM", 14 pt, medium,
