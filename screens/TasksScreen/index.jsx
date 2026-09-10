@@ -488,6 +488,10 @@ export default function TasksScreen() {
   const [showProjectManager, setShowProjectManager] = useState(false);
   // The board a long-press on the rail asked to edit; the sheet opens on it.
   const [manageBoard, setManageBoard] = useState(null);
+  // The board rail is a drawer under the header: hidden by default, the
+  // Boards key opens it, picking a board closes it. The key itself shows the
+  // selected board (dot + name) so the scope stays readable with it closed.
+  const [railOpen, setRailOpen] = useState(false);
   const openBoardManager = useCallback((name = null) => {
     setManageBoard(typeof name === 'string' ? name : null);
     setShowProjectManager(true);
@@ -711,12 +715,6 @@ export default function TasksScreen() {
     }
     return stats;
   }, [tasks, projects]);
-  // The day the calendar is parked on, for the header's + key.
-  const dayStats = useMemo(() => {
-    const d = calendarDate instanceof Date ? calendarDate : new Date();
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return { dateStr };
-  }, [calendarDate]);
   // Tasks under the DONE key: the calendar and the tree take a pre-filtered
   // list; the agenda gates below.
   const doneTasks = useMemo(() => (doneOnly ? tasks.filter((t) => t && (t.completed || isTaskDoneNow(t))) : tasks), [tasks, doneOnly]);
@@ -1800,35 +1798,47 @@ export default function TasksScreen() {
               </View>
             )}
           </TouchableOpacity>
-          {/* The + key: a task on the selected board, on the calendar's day. */}
+          {/* The Boards key: opens / closes the rail; reads the selected board. */}
           <TouchableOpacity
-            style={styles.headerAddKey}
+            style={[styles.headerBoardKey, (railOpen || selectedProject !== 'All') && styles.headerBoardKeyLit]}
             onPressIn={() => tapHaptic()}
-            onPress={() => openCreateForm(
-              'task',
-              viewMode === 'calendar' ? dayStats.dateStr : null,
-              selectedProject !== 'All' ? selectedProject : null,
-            )}
+            onPress={() => setRailOpen((v) => !v)}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             accessibilityRole="button"
-            accessibilityLabel={selectedProject !== 'All' ? `New task in ${boardLabel(selectedProject)}` : 'New task'}
-            testID="header-add-task"
+            accessibilityState={{ expanded: railOpen }}
+            accessibilityLabel={`Boards, ${selectedProject === 'All' ? 'all' : boardLabel(selectedProject)}${railOpen ? ', open' : ''}`}
+            testID="header-boards-key"
           >
-            <Icon name="plus" size={22} color={theme.colors.background} />
+            {selectedProject !== 'All' && (
+              <View style={[styles.headerBoardDot, { backgroundColor: getProjectColor(selectedProject) }]} />
+            )}
+            <Text
+              style={[styles.headerBoardText, (railOpen || selectedProject !== 'All') && styles.headerBoardTextLit]}
+              numberOfLines={1}
+            >
+              {selectedProject === 'All' ? 'Boards' : boardLabel(selectedProject)}
+            </Text>
+            <Icon
+              name={railOpen ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={(railOpen || selectedProject !== 'All') ? theme.colors.background : theme.colors.textTertiary}
+            />
           </TouchableOpacity>
         </View>
       </View>
 
-      <BoardRail
-        boards={projects}
-        selected={selectedProject}
-        stats={boardStats}
-        colorOf={getProjectColor}
-        onSelect={setSelectedProject}
-        onManage={openBoardManager}
-        onAddBoard={() => openBoardManager(null)}
-        theme={theme}
-      />
+      {railOpen && (
+        <BoardRail
+          boards={projects}
+          selected={selectedProject}
+          stats={boardStats}
+          colorOf={getProjectColor}
+          onSelect={(name) => { setSelectedProject(name); setRailOpen(false); }}
+          onManage={openBoardManager}
+          onAddBoard={() => openBoardManager(null)}
+          theme={theme}
+        />
+      )}
 
       {/* Project-picker overlay host. The picker (rendered at the bottom of
           this host) is an absolute overlay pinned just below the header.
@@ -2650,14 +2660,39 @@ const createStyles = (theme) => StyleSheet.create({
     gap: 8,
     marginLeft: 'auto',
   },
-  // A lit round key: text colour as the fill, the page colour as the glyph.
-  headerAddKey: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.colors.textPrimary,
+  // The Boards key: a hairline pill that LIGHTS (text colour as fill, page
+  // colour as glyph) while the rail is open or a board is selected.
+  headerBoardKey: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 5,
+    height: 32,
+    maxWidth: 132,
+    paddingLeft: 10,
+    paddingRight: 6,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: theme.colors.borderStrong,
+  },
+  headerBoardKeyLit: {
+    backgroundColor: theme.colors.textPrimary,
+    borderColor: theme.colors.textPrimary,
+  },
+  headerBoardDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  headerBoardText: {
+    flexShrink: 1,
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    color: theme.colors.textTertiary,
+  },
+  headerBoardTextLit: {
+    color: theme.colors.background,
   },
   headerRight: {
     flexDirection: 'row',
@@ -2675,7 +2710,7 @@ const createStyles = (theme) => StyleSheet.create({
     borderColor: theme.colors.border,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 0,
   },
   headerFilterBtnActive: {
     backgroundColor: theme.colors.surfaceElevated,
