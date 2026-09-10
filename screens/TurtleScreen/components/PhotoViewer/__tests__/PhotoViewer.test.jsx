@@ -236,3 +236,18 @@ describe('TagsSheet over a selection (list mode)', () => {
     expect(screen.getByTestId('tags-sheet-grab').props.accessibilityLabel).toBe('Expand sheet');
   });
 });
+
+describe('TagsSheet with its own Done action (the upload sheet)', () => {
+  test('Done runs onDone and never onClose; the scrim still closes', async () => {
+    const onDone = jest.fn();
+    const onClose = jest.fn();
+    const user = userEvent.setup();
+    await render(
+      <TagsSheet tags={['Trip']} suggestions={[]} onChange={jest.fn()} onClose={onClose} onDone={onDone} doneLabel="Upload" theme={theme} />,
+    );
+    await user.press(screen.getByTestId('tags-sheet-done'));
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId('tags-sheet-done').props.accessibilityLabel).toBe('Upload');
+  });
+});

@@ -97,6 +97,10 @@ export function sheetColors(theme, dark) {
 
 export default function ViewerSheet({
   onClose,
+  /** The Done button's own action, when it is not merely "close" (e.g. an
+   *  upload sheet whose Done means "go"). Drag-down and the scrim tap still
+   *  call onClose — those are a cancel, never a confirm. */
+  onDone,
   title,
   /** A second, quieter line under the title (e.g. "12 photos"). */
   subtitle,
@@ -256,7 +260,7 @@ export default function ViewerSheet({
                     <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>{title}</Text>
                     {!!subtitle && <Text style={[styles.subtitle, { color: colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text>}
                   </View>
-                  <Pressable onPress={close} hitSlop={12} accessibilityRole="button" accessibilityLabel={doneLabel} style={styles.doneHit} testID={testID ? `${testID}-done` : undefined}>
+                  <Pressable onPress={onDone ? () => { Keyboard.dismiss(); onDone(); } : close} hitSlop={12} accessibilityRole="button" accessibilityLabel={doneLabel} style={styles.doneHit} testID={testID ? `${testID}-done` : undefined}>
                     <Text style={[styles.done, { color: colors.primary }]}>{doneLabel}</Text>
                   </Pressable>
                 </View>
