@@ -61,8 +61,13 @@ jest.mock('../../services/uploadDiagnostics', () => ({
 }));
 const mockScheduleUploadDrain = jest.fn().mockResolvedValue(true);
 const mockCancelUploadDrain = jest.fn().mockResolvedValue(undefined);
+jest.mock('../../services/cameraRollAutoUpload', () => ({
+  subscribeAutoUpload: jest.fn(() => () => {}),
+  runAutoUpload: jest.fn(() => Promise.resolve(0)),
+}));
 jest.mock('../../services/backgroundUploadTask', () => ({
   registerUploadWorker: jest.fn(),
+  registerAutoUploadScanner: jest.fn(),
   scheduleUploadDrain: (...args) => mockScheduleUploadDrain(...args),
   cancelUploadDrain: (...args) => mockCancelUploadDrain(...args),
 }));

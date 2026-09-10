@@ -35,7 +35,8 @@ import { useAuth } from './AuthContext';
 import { notifyUploadComplete, updateUploadProgress, clearUploadProgress } from '../services/uploadNotify';
 import { streamMultipartUpload } from '../services/streamMultipartUpload';
 import { reportUploadIssue } from '../services/uploadDiagnostics';
-import { registerUploadWorker, scheduleUploadDrain, cancelUploadDrain } from '../services/backgroundUploadTask';
+import { registerUploadWorker, scheduleUploadDrain, cancelUploadDrain, registerAutoUploadScanner } from '../services/backgroundUploadTask';
+import { subscribeAutoUpload, runAutoUpload } from '../services/cameraRollAutoUpload';
 import { notifyHaptic } from '../utils/haptics';
 
 // Split into three contexts so a consumer only re-renders on the slice it
@@ -839,6 +840,19 @@ export function VaultUploadProvider({ children }) {
     const tick = setInterval(() => { if (appActiveRef.current) reconcileInflight(); }, RECONCILE_TICK_MS);
     return () => { sub.remove(); clearInterval(tick); };
   }, [processBatch, driveProgressNotification, reconcileInflight]);
+
+  // Phase 5: new camera photos queue themselves (Settings switch, off by
+  // default). Foreground triggers live here; the background window runs the
+  // same scan first. enqueue is read through a ref so the subscription is
+  // made once.
+  const enqueueRef = useRef(null);
+  enqueueRef.current = enqueue;
+  useEffect(() => {
+    const enq = (args) => enqueueRef.current?.(args);
+    registerAutoUploadScanner(() => runAutoUpload({ enqueue: enq }));
+    const unsubscribe = subscribeAutoUpload({ enqueue: enq });
+    return () => { unsubscribe(); registerAutoUploadScanner(null); };
+  }, []);
 
   // Phase 2: the background drain task polls this view of the queue while it
   // holds a processing window; `kick` resumes a paused batch inside it.
