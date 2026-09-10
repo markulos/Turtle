@@ -44,7 +44,7 @@ function ScheduleCard({
   const sub = subtitle !== undefined ? subtitle : (task?.project ? boardLabel(task.project) : '');
   return (
     <View style={styles.row} testID={testID}>
-      <Text style={[styles.time, { color: c.textTertiary }]} numberOfLines={1}>{timeLabel}</Text>
+      <Text style={[styles.time, { color: c.textSecondary }]} numberOfLines={1}>{timeLabel}</Text>
       <Pressable
         onPressIn={() => tapHaptic()}
         onPress={() => onPress?.(task)}
@@ -96,7 +96,7 @@ function ScheduleCard({
 
 export default memo(ScheduleCard);
 
-export const TIME_COL_W = 62;
+export const TIME_COL_W = 74;
 
 // A stretch of free hours longer than this collapses into ONE "Nh free" row
 // (the reference lists every hour, but a 06:00 → 22:00 day with two tasks
@@ -153,14 +153,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 12,
   },
+  // The time reads CLEARLY beside its card (the reference's "08 AM"): a
+  // mid-size medium-weight label in the secondary ink, on the card's first
+  // line. Minutes stay ("08:30 AM"); the column is wide enough for them.
   time: {
     width: TIME_COL_W,
-    paddingTop: 16,
-    paddingRight: 8,
-    fontSize: 12,
-    fontWeight: '400',
+    paddingTop: 15,
+    paddingRight: 6,
+    fontSize: 14,
+    fontWeight: '500',
     fontVariant: ['tabular-nums'],
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
   },
   card: {
     flex: 1,
