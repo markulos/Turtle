@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import useKeyboardHeight from '../../utils/useKeyboardHeight';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,6 +46,8 @@ export default function ProfileScreen() {
   const { theme } = useTheme();
   const c = theme.colors;
   const insets = useSafeAreaInsets();
+  // Name edit keyboard: pad the page so the field can scroll clear of it.
+  const keyboardHeight = useKeyboardHeight();
   const navigation = useNavigation();
   const { api, getBaseUrl } = useServer();
   const { authIdentity } = useAuth();
@@ -205,8 +208,10 @@ export default function ProfileScreen() {
           paddingTop: insets.top + 44,
           // Scrollable, so it may pass UNDER the dock — but it must be able to
           // scroll clear of it (turtle-chrome-underlay).
-          paddingBottom: dockOccupied(insets.bottom) + 24,
+          paddingBottom: dockOccupied(insets.bottom) + 24 + keyboardHeight,
         }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       >
         {/* Identity card — a HERO block, not a settings row: an accent wash

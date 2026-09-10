@@ -139,7 +139,9 @@ export function DismissKeyboardView({ children, style }) {
  *   <FlatList {...keyboardScrollProps} ... />
  */
 export const keyboardScrollProps = {
-  keyboardDismissMode: Platform.OS === 'ios' ? 'interactive' : 'on-drag',
+  // 'on-drag' on both platforms: a scroll dismisses the keyboard outright.
+  // iOS's proportional 'interactive' drag left lists half-covered mid-gesture.
+  keyboardDismissMode: 'on-drag',
   keyboardShouldPersistTaps: 'handled',
 };
 

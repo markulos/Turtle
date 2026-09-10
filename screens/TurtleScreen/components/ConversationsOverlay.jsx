@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native';
+import useKeyboardHeight from '../../../utils/useKeyboardHeight';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Image } from 'expo-image';
@@ -155,6 +156,8 @@ export default function ConversationsOverlay({ visible, onClose, onOpenClaude, i
   // Rows are { name, lastTs, latest } — latest/lastTs null when only the plain
   // names list was available (fast path / fallback).
   const [boards, setBoards] = useState([]);
+  // Search keyboard: pad the list so results can scroll clear of it.
+  const keyboardHeight = useKeyboardHeight();
   // { [boardName]: [thumbnailUrl, ...] } — lazily hydrated collage avatars.
   const [avatars, setAvatars] = useState({});
   const [loading, setLoading] = useState(false);
@@ -375,7 +378,9 @@ export default function ConversationsOverlay({ visible, onClose, onOpenClaude, i
             data={filtered}
             renderItem={renderItem}
             keyExtractor={(b) => b.name}
-            contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 24 + keyboardHeight }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             // This list lives inside EdgeSwipePage — a transparent Modal whose
             // content sits in a translateX'd Animated.View. iOS lays the scroll
             // indicator out against the untransformed frame, so it drifted in
