@@ -53,6 +53,12 @@ repo skill (loaded before any UI work) and by review.
   closes it; a flick decides faster than distance. Grab region = the whole card; the scrim fades with a
   closing pull; an inner list scrolls only once the sheet is expanded and hands back a downward drag at its
   top. (`utils/useSheetDismiss` is the legacy single-detent hook — migrate, do not add new users.)
+- The HEADER (handle + title row) is a grab bar in its own right: a drag there moves the sheet from ANY
+  scroll position (down closes, up expands), and a TAP on it flips between the two detents. Use
+  `headerPanHandlers` + `toggle` from useSheetDetents; `PhotoViewer/ViewerSheet` has it built in, so
+  reuse it for any dark sheet. The Done button keeps its own press (claim on move, never on start).
+- Dark sheets are BLACK: card rgba(0,0,0,.9) over a dark BlurView (the blur only softens the corners),
+  white text, pills invert to white / black text. Not a translucent grey.
 - Keyboard-aware sheets: no KeyboardAvoidingView. The sheet listens to the keyboard, jumps to EXPANDED,
   lifts by the keyboard height on a native-driver transform and caps its height below the status bar; it
   drops back when the keyboard goes. Search / add fields go at the TOP of a sheet.
