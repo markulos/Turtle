@@ -1135,6 +1135,8 @@ export default function TasksScreen() {
   const agendaChrome = useRef({
     pastHeader: { id: 'agenda-past-header', __agendaHeader: 'past' },
     upcomingHeader: { id: 'agenda-upcoming-header', __agendaHeader: 'upcoming' },
+    // The dashed "Add task" template card that heads the Upcoming band.
+    addCard: { id: 'agenda-add-card', __addCard: true },
     pastGap: { id: 'agenda-past-gap', __gap: true },
     upcomingGap: { id: 'agenda-upcoming-gap', __gap: true },
   }).current;
@@ -1146,9 +1148,12 @@ export default function TasksScreen() {
       items.push(agendaChrome.pastGap);
     }
     let upcomingHeaderIndex = -1;
-    if (upcomingTasks.length) {
+    // The band renders even with no rows (outside a search) so the add card
+    // is always there to start from — an empty board reads as an invitation.
+    if (upcomingTasks.length || !searchQuery) {
       upcomingHeaderIndex = items.length;
       items.push(agendaChrome.upcomingHeader);
+      items.push(agendaChrome.addCard);
       // Upcoming's date dividers as items too (same architecture as the past
       // zone — no inline prev-row peeking in renderItem). Tag the row copies
       // (__upcoming) so their keys don't collide with the SAME task shown in
@@ -1185,7 +1190,7 @@ export default function TasksScreen() {
     }
     return { items, upcomingHeaderIndex };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [upcomingTasks, pastZone]);
+  }, [upcomingTasks, pastZone, searchQuery]);
   // "Scroll to today" reads the CURRENT seam index, not a captured one.
   const upcomingHeaderIndexRef = useRef(-1);
   upcomingHeaderIndexRef.current = agenda.upcomingHeaderIndex;
@@ -2155,6 +2160,7 @@ export default function TasksScreen() {
             getItemType={(item) => {
               if (item.__agendaHeader) return `header-${item.__agendaHeader}`;
               if (item.__gap) return 'gap';
+              if (item.__addCard) return 'addCard';
               if (item.__divider) return 'divider';
               if (item.__placeholder) return 'placeholder';
               return item.__past ? 'pastRow' : 'upcomingRow';
@@ -2214,6 +2220,32 @@ export default function TasksScreen() {
 
               // ── Band gaps (the breathing room after each band) ───────────
               if (item.__gap) return <View style={styles.upcomingGap} />;
+              // The add-task template: a dashed card at the head of Upcoming
+              // that creates INTO the active board (active-board inheritance).
+              if (item.__addCard) {
+                const scoped = selectedProject !== 'All';
+                return (
+                  <TouchableOpacity
+                    style={styles.addTaskCard}
+                    onPressIn={() => tapHaptic()}
+                    onPress={() => openCreateForm('task', null, scoped ? selectedProject : null)}
+                    activeOpacity={0.6}
+                    accessibilityRole="button"
+                    accessibilityLabel={scoped ? `Add task to ${boardLabel(selectedProject)}` : 'Add task'}
+                    testID="agenda-add-task"
+                  >
+                    <View style={styles.addTaskIcon}>
+                      <Icon name="plus" size={18} color={theme.colors.textPrimary} />
+                    </View>
+                    <View style={styles.addTaskTextCol}>
+                      <Text style={styles.addTaskTitle} numberOfLines={1}>Add task</Text>
+                      <Text style={styles.addTaskCaption} numberOfLines={1}>
+                        {scoped ? `to ${boardLabel(selectedProject)}` : 'to any board'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }
 
               const prev = index > 0 ? items[index - 1] : null;
               const next = index < items.length - 1 ? items[index + 1] : null;
@@ -2889,6 +2921,46 @@ const createStyles = (theme) => StyleSheet.create({
     color: theme.colors.textPrimary,
     letterSpacing: 0.3,
     flex: 1,
+  },
+  // The dashed add-task template at the head of Upcoming: an empty inset
+  // slot the next task drops into.
+  addTaskCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: theme.spacing.md,
+    marginBottom: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.borderStrong,
+  },
+  addTaskIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addTaskTextCol: {
+    flex: 1,
+  },
+  addTaskTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.colors.textPrimary,
+  },
+  addTaskCaption: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    color: theme.colors.textTertiary,
+    marginTop: 1,
   },
   upcomingCountBadge: {
     minWidth: 22,

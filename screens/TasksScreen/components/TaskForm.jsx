@@ -26,7 +26,7 @@ import { DatePickerModal } from './DatePickerModal';
 import { WheelTimePicker } from './WheelTimePicker';
 import { normalizeTags, getPriorityColor } from '../utils/taskHelpers';
 import ParticipantPicker from './ParticipantPicker';
-import { impactHaptic, notifyHaptic } from '../../../utils/haptics';
+import { impactHaptic, notifyHaptic, tapHaptic } from '../../../utils/haptics';
 import {
   PRIORITIES,
   ITEM_TYPES,
@@ -293,6 +293,13 @@ export const TaskForm = ({
   };
 
   const titleInputRef = useRef(null);
+  // A new item opens straight into typing: focus the hero title once the
+  // page has slid in (the keyboard then rises with the page already still).
+  useEffect(() => {
+    if (!visible || initialData) return undefined;
+    const t = setTimeout(() => titleInputRef.current?.focus(), 380);
+    return () => clearTimeout(t);
+  }, [visible, initialData]);
   const descInputRef = useRef(null);
   const isEditing = !!initialData?.id;
   const itemType = formData.itemType || 'task';
@@ -655,6 +662,20 @@ export const TaskForm = ({
 
   const styles = createStyles(theme, insets);
 
+  // Local YYYY-MM-DD for the quick-date keys (never UTC — the calendar keys
+  // its days locally).
+  const localDateStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const quickDates = (() => {
+    const today = new Date();
+    const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+    const nextWeek = new Date(today); nextWeek.setDate(today.getDate() + 7);
+    return [
+      { label: 'Today', value: localDateStr(today) },
+      { label: 'Tomorrow', value: localDateStr(tomorrow) },
+      { label: 'Next week', value: localDateStr(nextWeek) },
+    ];
+  })();
+
   const formatDateLabel = (dateStr) => {
     const [y, m, d] = dateStr.split('-').map(Number);
     const date = new Date(y, m - 1, d);
@@ -710,9 +731,6 @@ export const TaskForm = ({
                 <Text style={styles.headerTitle} numberOfLines={1}>
                   {isEditing ? `Edit ${copy.label}` : `New ${copy.label}`}
                 </Text>
-                <Text style={styles.headerSubtitle} numberOfLines={1}>
-                  {isEditing ? 'Update the details below' : 'Add the essentials — the rest is optional'}
-                </Text>
               </View>
             </View>
 
@@ -751,7 +769,7 @@ export const TaskForm = ({
                   return (
                     <TouchableOpacity
                       key={opt.value}
-                      style={[styles.typeBtn, active && { backgroundColor: opt.accent, borderColor: opt.accent }]}
+                      style={[styles.typeBtn, active && styles.typeBtnActive]}
                       onPress={() => setItemType(opt.value)}
                       activeOpacity={0.85}
                       accessibilityRole="button"
@@ -759,8 +777,8 @@ export const TaskForm = ({
                     >
                       <Icon
                         name={opt.icon}
-                        size={18}
-                        color={active ? '#FFFFFF' : theme.colors.textTertiary}
+                        size={15}
+                        color={active ? theme.colors.background : theme.colors.textTertiary}
                       />
                       <Text style={[styles.typeBtnText, active && styles.typeBtnTextActive]}>
                         {opt.label}
@@ -833,6 +851,29 @@ export const TaskForm = ({
                 />
               )}
             </View>
+
+            {/* Quick dates — the three answers people give nine times in ten,
+                one tap each, shown only until a date is chosen (the Date chip
+                above then carries it, with a clear). Birthdays pick a real
+                date. */}
+            {!isBirthday && !formData.dueDate && (
+              <View style={styles.quickDateRow}>
+                {quickDates.map((q) => (
+                  <TouchableOpacity
+                    key={q.label}
+                    style={styles.quickDateKey}
+                    onPressIn={() => tapHaptic()}
+                    onPress={() => updateField('dueDate', q.value)}
+                    activeOpacity={0.6}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Due ${q.label}`}
+                    testID={`quick-date-${q.label}`}
+                  >
+                    <Text style={styles.quickDateText}>{q.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
             {/* Inline board list — toggled open/closed by the Board chip
                 above (selectProject/boardListOpen). Unchanged from the old
@@ -923,7 +964,7 @@ export const TaskForm = ({
                 toggled via toggleReminderLead — the SAME setter the expanded
                 "At time" preset chip below uses, so collapsed + expanded stay
                 in sync with no parallel reminder state. */}
-            {!isBirthday && (
+            {!isBirthday && !!formData.dueDate && (
               <TouchableOpacity
                 style={styles.qReminderRow}
                 activeOpacity={0.7}
@@ -1728,19 +1769,26 @@ const createStyles = (theme, insets) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 0.5,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
+    paddingVertical: 8,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: theme.colors.borderStrong,
   },
   typeBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
     color: theme.colors.textTertiary,
   },
   typeBtnTextActive: {
-    color: '#FFFFFF',
+    color: theme.colors.background,
+  },
+  // A lit key: the text colour as fill (Teenage-Engineering monochrome), not
+  // three competing accent fills.
+  typeBtnActive: {
+    backgroundColor: theme.colors.textPrimary,
+    borderColor: theme.colors.textPrimary,
   },
   input: {
     height: 40, // Match "add a new task" height
@@ -2142,6 +2190,29 @@ const createStyles = (theme, insets) => StyleSheet.create({
   // `boardList` also already exists above (reused as-is); only the
   // still-missing `boardItem`/`boardItemActive`/`boardItemText` trio is
   // added here.
+  quickDateRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  quickDateKey: {
+    height: 30,
+    paddingHorizontal: 12,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickDateText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    color: theme.colors.textSecondary,
+  },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

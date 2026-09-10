@@ -83,6 +83,18 @@ function BoardRail({ boards, selected, stats, colorOf, onSelect, onManage, onAdd
       keyboardShouldPersistTaps="handled"
       testID="board-rail"
     >
+      {/* Add / edit boards — FIRST on the rail, where the thumb lands. */}
+      <Pressable
+        onPressIn={() => tapHaptic()}
+        onPress={onAddBoard}
+        accessibilityRole="button"
+        accessibilityLabel="Add or edit boards"
+        testID="board-card-add"
+        style={({ pressed }) => [styles.addKey, { borderColor: pal.edge }, pressed && styles.pressed]}
+      >
+        <Icon name="plus" size={20} color={pal.muted} />
+        <Icon name="pencil-outline" size={13} color={pal.muted} style={styles.addKeySub} />
+      </Pressable>
       <BoardCard
         label="All"
         dot={null}
@@ -106,16 +118,6 @@ function BoardRail({ boards, selected, stats, colorOf, onSelect, onManage, onAdd
           testID={`board-card-${name}`}
         />
       ))}
-      <Pressable
-        onPressIn={() => tapHaptic()}
-        onPress={onAddBoard}
-        accessibilityRole="button"
-        accessibilityLabel="New board"
-        testID="board-card-add"
-        style={({ pressed }) => [styles.addKey, { borderColor: pal.edge }, pressed && styles.pressed]}
-      >
-        <Icon name="plus" size={20} color={pal.muted} />
-      </Pressable>
     </ScrollView>
   );
 }
@@ -207,6 +209,10 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
+  },
+  addKeySub: {
+    opacity: 0.7,
   },
   pressed: {
     opacity: 0.6,
