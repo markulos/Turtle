@@ -118,20 +118,24 @@ export default function TagsSheet({
   const composer = (
     <View style={[styles.composer, { borderBottomColor: colors.border }]}>
       <Icon name="magnify" size={20} color={colors.textMuted} />
-      <TextInput
-        style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.surface }]}
-        value={draft}
-        onChangeText={handleChange}
-        onSubmitEditing={submit}
-        placeholder="Search or add a tag…"
-        placeholderTextColor={colors.textMuted}
-        autoCapitalize="words"
-        autoCorrect={false}
-        returnKeyType="done"
-        blurOnSubmit={false}
-        accessibilityLabel="Search or add a tag"
-        testID="tags-input"
-      />
+      {/* Fixed-height pill CENTRING an auto-height input: the placeholder and
+          caret sit on the pill's centre line on both platforms. */}
+      <View style={[styles.inputWrap, { backgroundColor: colors.surface }]}>
+        <TextInput
+          style={[styles.inputInner, { color: colors.textPrimary }]}
+          value={draft}
+          onChangeText={handleChange}
+          onSubmitEditing={submit}
+          placeholder="Search or add a tag…"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="words"
+          autoCorrect={false}
+          returnKeyType="done"
+          blurOnSubmit={false}
+          accessibilityLabel="Search or add a tag"
+          testID="tags-input"
+        />
+      </View>
       <Pressable
         onPress={submit}
         disabled={!canSend}
@@ -221,13 +225,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     marginBottom: 4,
   },
-  input: {
+  inputWrap: {
     flex: 1,
     height: 40,
     borderRadius: 20,
     paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  inputInner: {
     paddingVertical: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
     fontSize: 15,
+    includeFontPadding: false,
     textAlignVertical: 'center',
   },
   send: {

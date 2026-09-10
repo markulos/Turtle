@@ -152,24 +152,37 @@ function BoardManagerSheet({
     ]);
   }, [tasks, onDelete]);
 
-  const canAdd = draft.trim().length > 0;
+  // Typing SEARCHES the boards (case-insensitive); when nothing matches the
+  // exact name, a dashed template row offers to create it — the tags sheet's
+  // model. The round + and Return do the same create.
+  const query = draft.trim();
+  const q = query.toLowerCase();
+  const shown = useMemo(() => (q ? boards.filter((b) => b.toLowerCase().includes(q)) : boards), [boards, q]);
+  const exactExists = !!q && boards.some((b) => b.toLowerCase() === q);
+  const canAdd = query.length > 0 && !exactExists;
   const composer = (
     <View style={[styles.composer, { borderBottomColor: colors.border }]}>
-      <Icon name="plus" size={20} color={colors.textMuted} />
-      <TextInput
-        style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.surface }]}
-        value={draft}
-        onChangeText={setDraft}
-        onSubmitEditing={submitAdd}
-        placeholder="New board…"
-        placeholderTextColor={colors.textMuted}
-        autoCapitalize="words"
-        autoCorrect={false}
-        returnKeyType="done"
-        blurOnSubmit={false}
-        accessibilityLabel="New board name"
-        testID="board-add-input"
-      />
+      <Icon name="magnify" size={20} color={colors.textMuted} />
+      {/* The field is a fixed-height pill that CENTRES an auto-height input —
+          the only layout that keeps the placeholder and the caret on the
+          pill's centre line on both platforms (a fixed-height TextInput
+          parks its glyphs low on iOS). */}
+      <View style={[styles.inputWrap, { backgroundColor: colors.surface }]}>
+        <TextInput
+          style={[styles.inputInner, { color: colors.textPrimary }]}
+          value={draft}
+          onChangeText={setDraft}
+          onSubmitEditing={submitAdd}
+          placeholder="Search or add a board…"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="words"
+          autoCorrect={false}
+          returnKeyType="done"
+          blurOnSubmit={false}
+          accessibilityLabel="Search or add a board"
+          testID="board-add-input"
+        />
+      </View>
       <Pressable
         onPress={submitAdd}
         disabled={!canAdd}
@@ -198,10 +211,31 @@ function BoardManagerSheet({
       topBar={composer}
       testID="board-manager-sheet"
     >
-      {boards.length === 0 && (
-        <Text style={[styles.empty, { color: colors.textMuted }]}>No boards yet — add one above.</Text>
+      {q.length > 0 && !exactExists && (
+        <Pressable
+          onPressIn={() => tapHaptic()}
+          onPress={submitAdd}
+          accessibilityRole="button"
+          accessibilityLabel={`Create board ${query}`}
+          testID="board-create-template"
+          style={({ pressed }) => [styles.createRow, { borderColor: colors.chipGhostBorder }, pressed && styles.pressed]}
+        >
+          <View style={[styles.createIcon, { borderColor: colors.chipGhostBorder }]}>
+            <Icon name="plus" size={16} color={colors.textPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.createTitle, { color: colors.textPrimary }]} numberOfLines={1}>Create "{query}"</Text>
+            <Text style={[styles.createCaption, { color: colors.textMuted }]} numberOfLines={1}>New board</Text>
+          </View>
+        </Pressable>
       )}
-      {boards.map((name) => (
+      {q.length > 0 && shown.length > 0 && (
+        <Text style={[styles.section, { color: colors.textSecondary }]}>Matching</Text>
+      )}
+      {boards.length === 0 && q.length === 0 && (
+        <Text style={[styles.empty, { color: colors.textMuted }]}>No boards yet — type a name above.</Text>
+      )}
+      {shown.map((name) => (
         <BoardRow
           key={name}
           name={name}
@@ -234,14 +268,58 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     marginBottom: 8,
   },
-  input: {
+  inputWrap: {
     flex: 1,
     height: 40,
     borderRadius: 20,
     paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  inputInner: {
     paddingVertical: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
     fontSize: 15,
+    includeFontPadding: false,
     textAlignVertical: 'center',
+  },
+  section: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  createRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  createIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  createCaption: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    marginTop: 1,
   },
   send: {
     width: 40,
