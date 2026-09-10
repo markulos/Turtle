@@ -3,6 +3,9 @@
 // before any gesture is registered. App.js is the registered root
 // (expo/AppEntry.js → App), so this is the correct place.
 import 'react-native-gesture-handler';
+// The app typeface goes on next: it swaps react-native's Text / TextInput for
+// Figtree-faced wrappers BEFORE any library captures the originals.
+import './utils/installFont';
 // Defines the background upload-drain task at module scope on EVERY launch —
 // including the background launches iOS makes for it. Must run before the app.
 import './services/backgroundUploadTask';

@@ -48,7 +48,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../context/ThemeContext';
 import { formatDueDate, isOverdue, itemTypeOf, itemColorOf, itemIconOf, taskPassesFilters, matchesRecurrence, isOccurrenceCompleted, parseLocalYMD } from '../utils/taskHelpers';
 import { TaskQuickInspector } from './TaskQuickInspector';
-import { TimelineTaskRow } from './TimelineTaskRow';
+import ScheduleCard, { clockLabel } from './ScheduleCard';
 import { HatchBackdrop } from './HatchBackdrop';
 import { TaskSectionFrontier, DAY_SECTION_FIRST_PAINT } from './TaskSectionFrontier';
 import { WheelTimePicker } from './WheelTimePicker';
@@ -1056,39 +1056,31 @@ const DayPane = React.memo(function DayPane({
               <Text style={styles.collapsedEmpty}>
                 No timed tasks yet. Tap + above, or expand to the timeline and long-press a slot.
               </Text>
-            ) : segments.map((seg, idx) => {
-              // Match the "Upcoming" agenda exactly by reusing TimelineTaskRow;
-              // keep the empty-time gap divider (which Upcoming lacks) as a
-              // sibling below each row. hideDate drops the redundant date since
-              // the day panel already shows it.
-              const isLast = idx === segments.length - 1;
+            ) : segments.map((seg) => {
+              // A planner row: the start time in the left column, a soft card
+              // washed in the board colour, the range bottom-right, an empty-
+              // time gap as a dashed rule with its duration.
               const hasGap = seg.gapAfter != null && seg.gapAfter > 0;
+              const done = seg.task.completed || isOccurrenceCompleted(seg.task, dayStr);
               return (
                 <React.Fragment key={seg.task.id}>
-                  <TimelineTaskRow
-                    item={seg.task}
+                  <ScheduleCard
+                    task={seg.task}
+                    theme={theme}
+                    timeLabel={clockLabel(seg.start, use24h)}
+                    range={`${clockLabel(seg.start, use24h)} – ${clockLabel(seg.end, use24h)}`}
+                    color={seg.task.project ? getProjectColor(seg.task.project) : null}
+                    done={done}
                     onPress={onTaskInspect || onTaskPress}
                     onLongPress={onTaskLongPress}
-                    onToggleComplete={(it) => onToggleComplete?.(it.id, dayStr)}
-                    isFirst={idx === 0}
-                    isLast={isLast && !hasGap}
-                    hideDate
-                    // Day context: checked = THIS day's occurrence is ticked
-                    // (meta.completedDates), not the never-true global bool.
-                    done={seg.task.completed || isOccurrenceCompleted(seg.task, dayStr)}
-                    // On a VIRTUAL future occurrence (this pane isn't the base
-                    // dueDate) the badge would count against the base day —
-                    // a red "started 1h ago" on tomorrow's pane. Suppress it.
-                    hideCountdown={seg.task.dueDate !== dayStr}
-                    hatchColor={seg.task.project ? getProjectColor(seg.task.project) : undefined}
-                    owner={multiUser && seg.task.userId ? {
-                      name: seg.task.ownerName || 'Unknown',
-                      color: ownerColor(seg.task.userId),
-                    } : null}
+                    onToggle={(it) => onToggleComplete?.(it.id, dayStr)}
+                    owner={multiUser && seg.task.userId ? { name: seg.task.ownerName || 'Unknown', color: ownerColor(seg.task.userId) } : null}
                     onOwnerPress={onOwnerPress}
+                    testID={`schedule-card-${seg.task.id}`}
                   />
                   {hasGap && (
                     <View style={styles.segGap}>
+                      <View style={styles.segGapSpacer} />
                       <View style={styles.segGapLine} />
                       <Text style={styles.segGapText}>{fmtDur(seg.gapAfter)}</Text>
                       <View style={styles.segGapLine} />
@@ -1200,38 +1192,27 @@ const DayPane = React.memo(function DayPane({
               <Text style={styles.untimedLabel}>To Do · No Time Set</Text>
               <Text style={styles.untimedCount}>{untimedTasks.length}</Text>
             </View>
-            {/* Rendered with TimelineTaskRow — the SAME card as the scheduled
-                compact rows above — so untimed To-Dos read as identical task
-                cards (rail toggle, elevated card, title, board subtitle). No
-                time to show, so the when-line falls back to "No time set" and
-                the live countdown is suppressed. */}
+            {/* Same planner row as the schedule, with a quiet "any time" in
+                the time column so the cards keep one straight left edge. */}
             <TaskSectionFrontier
               items={untimedTasks}
               sectionLabel="To-Do"
               theme={theme}
-              renderItem={(task, idx) => {
-                // Per-occurrence completion: a recurring task's checkbox reflects
-                // whether THIS day is ticked (meta.completedDates), not the global
-                // `completed` boolean.
+              renderItem={(task) => {
                 const done = task.completed || isOccurrenceCompleted(task, dayStr);
                 return (
-                  <TimelineTaskRow
+                  <ScheduleCard
                     key={task.id}
-                    item={task}
+                    task={task}
+                    theme={theme}
+                    timeLabel="any time"
+                    range=""
+                    color={task.project ? getProjectColor(task.project) : null}
+                    done={done}
                     onPress={onTaskInspect || onTaskPress}
                     onLongPress={onTaskLongPress}
-                    onToggleComplete={(it) => onToggleComplete?.(it.id, dayStr)}
-                    isFirst={idx === 0}
-                    isLast={idx === untimedTasks.length - 1}
-                    hideDate
-                    done={done}
-                    hideCountdown
-                    whenLabelFallback="No time set"
-                    hatchColor={task.project ? getProjectColor(task.project) : undefined}
-                    owner={multiUser && task.userId ? {
-                      name: task.ownerName || 'Unknown',
-                      color: ownerColor(task.userId),
-                    } : null}
+                    onToggle={(it) => onToggleComplete?.(it.id, dayStr)}
+                    owner={multiUser && task.userId ? { name: task.ownerName || 'Unknown', color: ownerColor(task.userId) } : null}
                     onOwnerPress={onOwnerPress}
                   />
                 );
@@ -1261,10 +1242,9 @@ const DayPane = React.memo(function DayPane({
                 color={theme.colors.textTertiary}
               />
             </TouchableOpacity>
-            {/* Same large TimelineTaskRow card as the scheduled + To-Do sections.
-                Pending keeps its due-date + countdown (backlog context) and adds
-                a trailing "add to today" button that stamps the viewed day as the
-                dueDate with no time — moving the task into today's To-Do. */}
+            {/* Planner rows again; the time column carries the due date (or
+                "no date") and the trailing key stamps the viewed day onto the
+                task — moving it into this day's To-Do. */}
             {!untimedCollapsed && (
               <TaskSectionFrontier
                 items={stripTasks}
@@ -1275,23 +1255,21 @@ const DayPane = React.memo(function DayPane({
                 // backlog in on idle frames after.
                 initialBatch={DAY_SECTION_FIRST_PAINT}
                 autoGrow
-                renderItem={(task, idx) => {
+                renderItem={(task) => {
                   const done = task.completed || isOccurrenceCompleted(task, dayStr);
                   return (
-                    <TimelineTaskRow
+                    <ScheduleCard
                       key={task.id}
-                      item={task}
+                      task={task}
+                      theme={theme}
+                      timeLabel={task.dueDate ? task.dueDate.slice(5).replace('-', '/') : 'no date'}
+                      range=""
+                      color={task.project ? getProjectColor(task.project) : null}
+                      done={done}
                       onPress={onTaskInspect || onTaskPress}
                       onLongPress={onTaskLongPress}
-                      onToggleComplete={(it) => onToggleComplete?.(it.id, dayStr)}
-                      isFirst={idx === 0}
-                      isLast={idx === stripTasks.length - 1}
-                      done={done}
-                      hatchColor={task.project ? getProjectColor(task.project) : undefined}
-                      owner={multiUser && task.userId ? {
-                        name: task.ownerName || 'Unknown',
-                        color: ownerColor(task.userId),
-                      } : null}
+                      onToggle={(it) => onToggleComplete?.(it.id, dayStr)}
+                      owner={multiUser && task.userId ? { name: task.ownerName || 'Unknown', color: ownerColor(task.userId) } : null}
                       onOwnerPress={onOwnerPress}
                       trailing={!done ? (
                         <TouchableOpacity
@@ -2455,9 +2433,11 @@ export const CalendarView = ({
       day: 'numeric'
     });
 
-    if (isToday) return { title: "Today's Tasks", subtitle: dateStr };
-    if (isTomorrow) return { title: "Tomorrow's Tasks", subtitle: dateStr };
-    return { title: "Tasks", subtitle: dateStr };
+    // One title, always: the date beside it says which day (with a quiet
+    // "Today" / "Tomorrow" prefix when it applies).
+    if (isToday) return { title: 'Task Schedule', subtitle: `Today · ${dateStr}` };
+    if (isTomorrow) return { title: 'Task Schedule', subtitle: `Tomorrow · ${dateStr}` };
+    return { title: 'Task Schedule', subtitle: dateStr };
   }, [selectedDate]);
 
   const handleCancelAdd = useCallback(() => {
@@ -2702,25 +2682,14 @@ export const CalendarView = ({
             <View style={styles.grabHandle} />
           </View>
           <View style={styles.taskListHeaderContent}>
+            {/* "Task Schedule" large, the date small and light on the same
+                baseline — nothing else in the header. */}
             <View style={styles.titleRow}>
-              <Text style={styles.taskListTitle}>{taskTitle}</Text>
+              <Text style={styles.taskListTitle} numberOfLines={1}>{taskTitle}</Text>
+              <Text style={styles.dateSubtitle} numberOfLines={1}>{taskSubtitle}</Text>
             </View>
-            {/* Date subtitle - always show when calendar expanded */}
-            {(taskSubtitle || isExpanded) && (
-              <Text style={styles.dateSubtitle}>{taskSubtitle || selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
-            )}
-            <Text style={[styles.calendarHint, isExpanded && styles.calendarHintBlue]}>
-              {isExpanded ? 'Tap to view tasklist' : 'Tap to open calendar'}
-            </Text>
           </View>
           <View style={styles.taskListHeaderRight}>
-            {/* Right rail: "{N} Tasks" (hairline-thin) + the white "+" add
-                button (a rounded square). The count is plain info; the button
-                opens the unified create form pre-dated to this day (type still
-                switchable). The chevron + Due/Open toggle were removed. */}
-            <Text style={styles.taskCount}>
-              {selectedDateTasks.length} Tasks
-            </Text>
             {onCreateForDate && (
               <TouchableOpacity
                 style={styles.headerAddBtn}
@@ -3322,20 +3291,22 @@ const createStyles = (theme) => StyleSheet.create({
     color: '#64B5F6', // Light blue
   },
   taskListTitle: {
-    fontSize: theme.typography.body,
+    fontSize: 26,
     fontWeight: '600',
+    letterSpacing: -0.4,
     color: theme.colors.textPrimary,
   },
   titleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
+    alignItems: 'baseline',
   },
   dateSubtitle: {
-    fontSize: 13,
-    color: theme.colors.textSecondary,
-    marginTop: 2,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '300',
+    color: theme.colors.textPrimary,
+    opacity: 0.5,
+    marginLeft: 10,
+    flexShrink: 1,
   },
   // "{N} Tasks" — hairline-thin weight ('200' renders reliably thin on both
   // iOS + Android, unlike '100' which falls back to regular on Android).
@@ -3361,7 +3332,8 @@ const createStyles = (theme) => StyleSheet.create({
   // Untimed ("All Day") header strip — sits above the hour grid for
   // tasks that don't have a HH:MM start time.
   untimedSection: {
-    paddingHorizontal: 16,
+    paddingLeft: 8,
+    paddingRight: 16,
     paddingTop: 10,
     paddingBottom: 8,
     backgroundColor: theme.colors.surface,
@@ -3528,6 +3500,7 @@ const createStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 2,
+    paddingLeft: 8,
   },
   untimedLabel: {
     fontSize: 11,
@@ -3621,7 +3594,8 @@ const createStyles = (theme) => StyleSheet.create({
   },
   collapsedSchedule: {
     backgroundColor: theme.colors.surface,
-    paddingHorizontal: 16,
+    paddingLeft: 8,
+    paddingRight: 16,
     paddingTop: 4,
     paddingBottom: 24,
   },
@@ -3644,8 +3618,14 @@ const createStyles = (theme) => StyleSheet.create({
   },
   segGapLine: {
     flex: 1,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: theme.colors.border,
+    height: 0,
+    borderTopWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.borderStrong || theme.colors.border,
+  },
+  // Keeps the gap rule inside the card column (past the time labels).
+  segGapSpacer: {
+    width: 62 - 8,
   },
   segGapText: {
     fontSize: 11,
