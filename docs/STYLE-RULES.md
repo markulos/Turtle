@@ -56,11 +56,14 @@ repo skill (loaded before any UI work) and by review.
 
 - A sheet over an open Modal is an in-tree overlay, never a sibling `Modal` (iOS drops it silently).
   Sheets render LAST in their tree and carry `zIndex` so they draw over chrome and cards.
-- Every card that pops up from below has TWO DETENTS through `utils/useSheetDetents`: it opens at
+- Every card that pops up from below whose CONTENT CAN EXCEED its collapsed height (tags, details, filters
+  with long lists) has TWO DETENTS through `utils/useSheetDetents`: it opens at
   COLLAPSED (60 % of the screen), a drag up takes it to EXPANDED (the full screen: corners square off, content clears the status bar), a drag down past collapsed
   closes it; a flick decides faster than distance. Grab region = the whole card; the scrim fades with a
   closing pull; an inner list scrolls only once the sheet is expanded and hands back a downward drag at its
   top. (`utils/useSheetDismiss` is the legacy single-detent hook — migrate, do not add new users.)
+  A COMPACT menu that sizes to its content (album / track actions, a time wheel, a short filter list) has
+  nothing to expand into: it stays single-detent (pull down to close) — `useSheetDismiss` is fine there.
 - The HEADER (handle + title row) is a grab bar in its own right: a drag there moves the sheet from ANY
   scroll position (down closes, up expands), and a TAP on it flips between the two detents. Use
   `headerPanHandlers` + `toggle` from useSheetDetents; `PhotoViewer/ViewerSheet` has it built in, so

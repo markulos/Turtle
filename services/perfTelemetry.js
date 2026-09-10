@@ -232,17 +232,30 @@ export function createStallGate() {
 // ── heartbeat: stalls + cold start ──────────────────────────────────────────
 const stallGate = createStallGate();
 let lastBeat = Date.now();
-if (!IS_TEST) setInterval(() => {
-  const now = Date.now();
-  const overshoot = now - lastBeat - HEARTBEAT_MS;
-  lastBeat = now;
-  if (!coldStartSent) {
-    coldStartSent = true;
-    record('cold_start', now - MODULE_LOAD_AT);
-    return; // the first interval includes module-eval time; not a stall
-  }
-  if (stallGate.accept(overshoot, STALL_OVERSHOOT_MS)) record('js_stall', overshoot);
-}, HEARTBEAT_MS);
+// Belt and braces with the gate above: while the app is not ACTIVE the JS
+// thread is not ours to measure — record nothing, and restart the clock on
+// every state change (the gate's amnesty still covers the beat that spans it).
+// Between them the 60 s … 570 s suspension samples that swamped the summary
+// (p99 319 s while p50 was 221 ms) have no way in.
+let appActive = AppState.currentState == null || AppState.currentState === 'active';
+if (!IS_TEST) {
+  AppState.addEventListener('change', (s) => {
+    appActive = s === 'active';
+    lastBeat = Date.now();
+  });
+  setInterval(() => {
+    const now = Date.now();
+    const overshoot = now - lastBeat - HEARTBEAT_MS;
+    lastBeat = now;
+    if (!coldStartSent) {
+      coldStartSent = true;
+      record('cold_start', now - MODULE_LOAD_AT);
+      return; // the first interval includes module-eval time; not a stall
+    }
+    if (!appActive) return;
+    if (stallGate.accept(overshoot, STALL_OVERSHOOT_MS)) record('js_stall', overshoot);
+  }, HEARTBEAT_MS);
+}
 
 // ── flush ───────────────────────────────────────────────────────────────────
 // Through global.fetch DELIBERATELY: this module loads first, so ServerContext's
