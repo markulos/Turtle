@@ -29,6 +29,12 @@ const POLL_MS = 1000;
 const MIN_INTERVAL_MINUTES = 15;
 
 let worker = null; // { isBusy(): boolean, hasPending(): Promise<boolean>, kick(): void }
+// Phase 5: the camera-roll scanner runs FIRST in every window, so photos
+// taken while the app was closed join the queue before the drain starts.
+let scanner = null; // () => Promise<number>
+export function registerAutoUploadScanner(fn) {
+  scanner = typeof fn === 'function' ? fn : null;
+}
 
 /** The provider lends the task a view of its queue. */
 export function registerUploadWorker(w) {
@@ -37,6 +43,7 @@ export function registerUploadWorker(w) {
 
 async function drain() {
   const started = Date.now();
+  try { await scanner?.(); } catch { /* the drain still runs */ }
   try { worker?.kick?.(); } catch { /* best effort */ }
   while (Date.now() - started < BUDGET_MS) {
     let pending = true;

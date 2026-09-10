@@ -90,13 +90,20 @@ Phases 1–3 safe to retry aggressively.
   `streamMultipartUpload.js` (chunk loop with `Range`), queue bookkeeping (`sessionId`, `offset`).
 - No native change.
 
-## Phase 5 — auto-upload new camera photos while closed (the iCloud-like goal)
+## Phase 5 — auto-upload new camera photos while closed (the iCloud-like goal) — BUILT 2026-09-10
 
 What: `expo-media-library` change listener while the app runs; while closed, the Phase 2 task scans
 for assets newer than the last upload watermark and queues them. Needs the Photos permission at
 "All Photos" level (already requested) and the user's opt-in switch.
 - Limits: iOS never runs a third-party app on "new photo taken"; the scan happens only in the Phase 2
   windows. This is the same constraint every non-Apple photo app lives with.
+- Built:  — Settings switch ("Photos › Auto-upload new photos", off by default; turning it on
+  asks for the photo permission and sets the watermark to NOW so only photos taken from then on upload by themselves),
+  AsyncStorage  { enabled, watermark, lastScanAt, lastCount }, a scan = getAssetsAsync(createdAfter:
+  watermark) → VaultUploadContext.enqueue in the device picker's shape (tags Phone Uploads), watermark advances only when
+  the uploader accepted the batch (a busy uploader → the next trigger retries). Triggers: launch / foreground / a
+  media-library change while open (3 s debounce) — wired in VaultUploadContext; and FIRST inside every background
+  window (registerAutoUploadScanner in backgroundUploadTask). Dedupe stays the uploader's fingerprint check. OTA-only.
 
 ## Order and effort
 

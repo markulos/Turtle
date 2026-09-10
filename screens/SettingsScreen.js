@@ -35,6 +35,8 @@ import { clearAllCaches, getCacheSizeBytes, formatBytes } from '../utils/cacheMa
 import { tapHaptic, impactHaptic, notifyHaptic } from '../utils/haptics';
 import { isGestureProbeEnabled, setGestureProbeEnabled, subscribeDebugSettings } from '../utils/debugSettings';
 import { matchesQuery } from '../utils/settingsSearch';
+import { useVaultUploadActions } from '../context/VaultUploadContext';
+import { getAutoUploadSettings, setAutoUploadEnabled, runAutoUpload } from '../services/cameraRollAutoUpload';
 import PondInvitesSection from '../components/PondInvitesSection';
 
 const MASTER_KEY_STORE = 'vault_master_key';
@@ -62,6 +64,7 @@ const SETTING_TERMS = {
   darkMode: 'dark mode theme appearance night light colour color',
   accent: 'highlight colour color accent theme appearance swatch',
   hideVault: 'hide vault button navbar tab bar navigation photos',
+  autoUpload: 'auto upload camera roll new photos videos background sync vault automatic icloud',
   cache: 'cache size storage space photos clear free disk measure',
   notifications: 'notifications push alerts reminders test sms text badge sound',
   gestureProbe: 'gesture probe debug developer performance lag jank stalls diagnostics',
@@ -170,6 +173,28 @@ async function pollHealToCompletion(api, onProgress, { intervalMs = 2000, maxMs 
 export default function SettingsScreen({ active = true }) {
   const { theme, isDark, toggleTheme, timeFormat, setTimeFormat, hideVaultButton, setHideVaultButton, showCalendarDayTasks, setShowCalendarDayTasks, calendarFreeScroll, setCalendarFreeScroll, accent, setAccent } = useTheme();
   const { serverIP, isConnected, pondEnv, loading, saveIP, checkConnection, api, getBaseUrl } = useServer();
+  // Auto-upload (background uploads Phase 5): the switch + its last-scan line.
+  const vaultActions = useVaultUploadActions();
+  const [autoUpload, setAutoUpload] = useState({ enabled: false, lastScanAt: 0, lastCount: 0 });
+  useEffect(() => {
+    let alive = true;
+    getAutoUploadSettings().then((s) => { if (alive) setAutoUpload(s); });
+    return () => { alive = false; };
+  }, [active]);
+  const toggleAutoUpload = useCallback(async (on) => {
+    tapHaptic();
+    const r = await setAutoUploadEnabled(on);
+    setAutoUpload(r);
+    if (on && !r.granted) {
+      Alert.alert('Photo access needed', 'Allow access to all photos in Settings › Turtle › Photos to upload new ones automatically.');
+      return;
+    }
+    if (on) {
+      const n = await runAutoUpload({ enqueue: vaultActions.enqueue });
+      setAutoUpload(await getAutoUploadSettings());
+      if (n > 0) notifyHaptic('success');
+    }
+  }, [vaultActions]);
   const [isHealing, setIsHealing] = useState(false);
   // {processed, total} while the server's heal job is running (null = idle).
   const [healProgress, setHealProgress] = useState(null);
@@ -908,6 +933,31 @@ export default function SettingsScreen({ active = true }) {
             )}
 
             {/* Navigation Section — control what shows in the bottom navbar. */}
+            {/* Photos — auto-upload (background uploads Phase 5). */}
+            {(searching || tabKey === 'general') && (
+            <SettingsSection title="Photos" icon="cloud-upload-outline" query={searchQuery} styles={styles} theme={theme}>
+              <SettingsItem terms={SETTING_TERMS.autoUpload}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingInfo}>
+                  <Text style={styles.settingLabel}>Auto-upload new photos</Text>
+                  <Text style={styles.settingDescription}>
+                    {autoUpload.enabled
+                      ? `New camera photos and videos go to your vault on their own — while the app is open and in its background windows.${autoUpload.lastScanAt ? ` Last scan ${new Date(autoUpload.lastScanAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${autoUpload.lastCount ? `, ${autoUpload.lastCount} queued` : ''}.` : ''}`
+                      : 'Photos taken from now on upload to your vault by themselves. Older ones stay a Smart Sync choice.'}
+                  </Text>
+                </View>
+                <Switch
+                  value={!!autoUpload.enabled}
+                  onValueChange={toggleAutoUpload}
+                  trackColor={{ false: theme.colors.surfaceElevated, true: theme.colors.surfaceHighlight }}
+                  thumbColor={autoUpload.enabled ? theme.colors.textPrimary : theme.colors.textTertiary}
+                  accessibilityLabel={autoUpload.enabled ? 'Auto-upload new photos, on' : 'Auto-upload new photos, off'}
+                />
+              </View>
+              </SettingsItem>
+            </SettingsSection>
+            )}
+
             {(searching || tabKey === 'general') && (
             <SettingsSection title="Navigation" icon="dock-bottom" query={searchQuery} styles={styles} theme={theme}>
               <SettingsItem terms={SETTING_TERMS.hideVault}>
