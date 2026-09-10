@@ -45,7 +45,7 @@
           "processing"
         ]
       },
-      "buildNumber": "3"
+      "buildNumber": "4"
     },
     "android": {
       "package": "com.markulos.passwordtaskmanager",
@@ -56,7 +56,7 @@
         "android.permission.WRITE_CONTACTS",
         "android.permission.POST_NOTIFICATIONS"
       ],
-      "versionCode": 2
+      "versionCode": 3
     },
     "plugins": [
       [

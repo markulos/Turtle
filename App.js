@@ -9,6 +9,10 @@ import './services/backgroundUploadTask';
 import React, { useState, useEffect } from 'react';
 import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+// Native keyboard tracking (build 4+). The provider alone changes nothing on
+// screen; it lets screens adopt useReanimatedKeyboardAnimation / KeyboardAware
+// views one at a time, replacing the RN Keyboard-event guesswork.
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
@@ -418,6 +422,7 @@ export default function App() {
       // not lag). Capture + false, so routing is untouched here too.
       onMoveShouldSetResponderCapture={() => { gestureProbe.touchMove(); return false; }}
     >
+      <KeyboardProvider>
       <ShareIntentProvider>
         <SafeAreaProvider>
           <ThemeProvider>
@@ -478,6 +483,7 @@ export default function App() {
           </ThemeProvider>
         </SafeAreaProvider>
       </ShareIntentProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }
