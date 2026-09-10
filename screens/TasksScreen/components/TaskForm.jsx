@@ -236,7 +236,7 @@ export const TaskForm = ({
       const h = e?.endCoordinates?.height || 0;
       // The bar's own safe-area padding is dead space once it sits on the
       // keyboard, so lift by that much less and the button lands on its edge.
-      run(-Math.max(h - (insets.bottom || 0), 0), e?.duration);
+      run(-Math.max(h - (insets.bottom || 0) + FOOTER_GAP, 0), e?.duration);
     });
     const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', (e) => run(0, e?.duration));
     return () => { show.remove(); hide.remove(); };
@@ -1694,7 +1694,8 @@ function GroupHeader({ theme, label }) {
 // Height the lifted Save bar covers at the bottom of the fields while the
 // keyboard is up (paddingTop 10 + 48pt button + hairline; safe-area padding
 // is cancelled by the lift).
-const FOOTER_RESERVE = 72;
+const FOOTER_GAP = 12; // breathing room between the lifted bar and the keyboard
+const FOOTER_RESERVE = 72 + FOOTER_GAP;
 
 const createStyles = (theme, insets) => StyleSheet.create({
   // Full-height wrapper for the page (was a KeyboardAvoidingView).
