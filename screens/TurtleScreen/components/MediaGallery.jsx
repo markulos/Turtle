@@ -41,7 +41,7 @@ import * as Sharing from 'expo-sharing';
 import { sweepTransientCaches } from '../../../utils/cacheManager';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { impactHaptic } from '../../../utils/haptics';
+import { impactHaptic, tapHaptic } from '../../../utils/haptics';
 // Dev-only responsiveness watchdog — every call below compiles to an immediate
 // return in a release build (see utils/gestureProbe).
 import gestureProbe from '../../../utils/gestureProbe';
@@ -1289,17 +1289,9 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
 
   const dismissUploadModal = useCallback(() => {
     Keyboard.dismiss();
-    uploadModalY.stopAnimation();
-    Animated.timing(uploadModalY, {
-      toValue: height, // Slide it off the bottom of the screen
-      duration: 250,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: true,
-    }).start(() => {
-      setUploadModalVisible(false);
-      setPendingAssets([]);
-    });
-  }, [uploadModalY]);
+    setUploadModalVisible(false);
+    setPendingAssets([]);
+  }, []);
 
   const uploadPanResponder = useRef(
     PanResponder.create({
@@ -4065,164 +4057,9 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
         </KeyboardAvoidingView>
       )}
 
-      {/* Pre-Upload Album Selection Modal (Draggable Bottom-Sheet Style) */}
-      <Modal 
-        visible={uploadModalVisible}
-        transparent={true}
-        animationType="none"
-        onShow={() => {
-          // Ensure modal is reset when shown
-          uploadModalY.stopAnimation();
-          uploadModalY.setValue(0);
-        }}
-      >
-        {/* Plain View, not KeyboardAvoidingView: the card lifts clear of the
-            keyboard via uploadKeyboardLift on the wrapper below — the same
-            UI-thread, frame-locked motion the Turtle chat composer uses. */}
-        <View style={styles.uploadModalOverlay}>
-          {/* Background dimmer - tap to dismiss */}
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={dismissUploadModal}
-          />
-          {/* Keyboard-lift wrapper. box-none so it only catches touches on the
-              card itself and the dimmer behind stays tappable. */}
-          <Reanimated.View pointerEvents="box-none" style={uploadKeyboardLift}>
-          <Animated.View
-            onLayout={(e) => { uploadCardH.value = e.nativeEvent.layout.height; }}
-            style={[
-              styles.uploadModalContent,
-              {
-                backgroundColor: theme.colors.surfaceElevated,
-                transform: [{ translateY: uploadModalY }]
-              }
-            ]}
-            {...uploadPanResponder.panHandlers}
-          >
-            <View style={{ width: 40, height: 5, backgroundColor: theme.colors.border, borderRadius: 3, alignSelf: 'center', marginBottom: 16 }} />
-
-            <Text style={[styles.uploadModalTitle, { color: theme.colors.textPrimary, marginTop: 0 }]}>
-              Upload {pendingAssets.length} Item{pendingAssets.length > 1 ? 's' : ''}
-            </Text>
-            
-            <Text style={[styles.uploadModalLabel, { color: theme.colors.textSecondary }]}>Save to Album:</Text>
-            
-            <View style={[styles.chipInputContainer, { borderColor: theme.colors.border }]}>
-              {selectedTags.map((tag, index) => (
-                <View key={index} style={[styles.chip, { backgroundColor: theme.colors.primary }]}>
-                  <Text style={styles.chipText}>{tag}</Text>
-                  <TouchableOpacity onPress={() => setSelectedTags(selectedTags.filter((_, i) => i !== index))}>
-                    <Icon name="close-circle" size={16} color={theme.colors.background} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-              <TextInput
-                style={[styles.chipTextInput, { color: theme.colors.textPrimary }]}
-                value={tagInputValue}
-                onChangeText={(text) => {
-                  if (text.includes(',')) {
-                    const newTags = text.split(',').map(t => t.trim()).filter(Boolean);
-                    if (newTags.length > 0) {
-                      setSelectedTags(prev => Array.from(new Set([...prev, ...newTags])));
-                    }
-                    setTagInputValue('');
-                  } else {
-                    setTagInputValue(text);
-                  }
-                }}
-                onKeyPress={({ nativeEvent }) => {
-                  if (nativeEvent.key === 'Backspace' && tagInputValue === '' && selectedTags.length > 0) {
-                    setSelectedTags(prev => prev.slice(0, -1));
-                  }
-                }}
-                placeholder={selectedTags.length === 0 ? "Type tags, comma to add..." : ""}
-                placeholderTextColor={theme.colors.textMuted}
-                autoCapitalize="words"
-                blurOnSubmit={true}
-                onSubmitEditing={() => Keyboard.dismiss()}
-                inputAccessoryViewID="uploadTagInputAccessory"
-              />
-            </View>
-
-            {tagInputValue.length > 0 && (
-              <View style={styles.tagAutocompleteContainer}>
-                <Text style={[styles.tagAutocompleteLabel, { color: theme.colors.textMuted }]}>
-                  Matching tags:
-                </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={styles.tagAutocompleteScroll}>
-                  {globalAlbums
-                    .filter(album => album.toLowerCase().includes(tagInputValue.toLowerCase()))
-                    .sort((a, b) => {
-                      const aActive = selectedTags.includes(a);
-                      const bActive = selectedTags.includes(b);
-                      if (aActive && !bActive) return -1;
-                      if (!aActive && bActive) return 1;
-                      return a.localeCompare(b);
-                    })
-                    .map(album => (
-                      <TouchableOpacity 
-                        key={album} 
-                        style={[
-                          styles.tagAutocompleteChip,
-                          selectedTags.includes(album) && { backgroundColor: theme.colors.primary }
-                        ]}
-                        onPress={() => {
-                          // Keep the keyboard up so the user can keep typing the
-                          // next tag; selection is instant local state.
-                          setSelectedTags(prev => prev.includes(album) ? prev : [...prev, album]);
-                          setTagInputValue('');
-                        }}
-                      >
-                        <Text style={[
-                          styles.tagAutocompleteChipText,
-                          selectedTags.includes(album) && { color: theme.colors.background }
-                        ]}>
-                          {album}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                </ScrollView>
-              </View>
-            )}
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={styles.quickSelectScroll}>
-              {globalAlbums.map(album => (
-                <TouchableOpacity
-                  key={album}
-                  style={[styles.quickSelectChip, selectedTags.includes(album) && { backgroundColor: theme.colors.primary }]}
-                  onPress={() => {
-                    setSelectedTags(prev => prev.includes(album) ? prev.filter(t => t !== album) : [...prev, album]);
-                  }}
-                >
-                  <Text style={[styles.quickSelectText, selectedTags.includes(album) && { color: theme.colors.background }]}>{album}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            
-            <View style={styles.uploadModalButtons}>
-              <TouchableOpacity
-                style={[styles.uploadModalButton, { backgroundColor: theme.colors.surface }]}
-                onPress={dismissUploadModal}
-              >
-                <Text style={{ color: theme.colors.textPrimary }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.uploadModalButton, { backgroundColor: theme.colors.primary, opacity: uploadBusy ? 0.6 : 1 }]}
-                onPress={executeUpload}
-                disabled={uploadBusy}
-              >
-                <Text style={{ color: theme.colors.background, fontWeight: 'bold' }}>
-                  {uploadBusy ? 'Upload running…' : 'Upload Now'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {/* Progress, the run-in-background pill, and the delete-originals
-                prompt all live in the GLOBAL VaultUploadPill now — confirming
-                here closes this modal instantly and the pill takes over. */}
-          </Animated.View>
-          </Reanimated.View>
-        </View>
-      </Modal>
+      {/* The pre-upload tag picker is the TagsSheet mounted at the screen root
+          (see the bottom of this component) — one tag editor for the viewer,
+          bulk tagging and uploads. */}
 
       {/* Keyboard Dismiss Button (iOS only) */}
       {Platform.OS === 'ios' && (
@@ -5053,6 +4890,46 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
           above every other overlay on the screen — the selection bar, the
           filter sheet, the headers — so it mounts LAST in the screen root
           (ViewerSheet carries zIndex 1000), not inside the photos page. */}
+      {/* Pre-upload tags: the SAME sheet. The tags chosen here go on every
+          photo of the batch (executeUpload falls back to Phone Uploads when
+          none is chosen). The old chip-input modal did not apply its tags
+          reliably; this one commits through the same list the viewer and bulk
+          tagging use. */}
+      {uploadModalVisible && (
+        <TagsSheet
+          tags={selectedTags}
+          suggestions={globalAlbums}
+          onChange={setSelectedTags}
+          onClose={dismissUploadModal}
+          theme={theme}
+          title={`Upload ${pendingAssets.length} ${pendingAssets.length === 1 ? 'photo' : 'photos'}`}
+          subtitle="Tags go on every photo in this upload"
+          bottomInset={Math.max(tabBarH, insets.bottom) + 12}
+          footer={(
+            <Pressable
+              onPress={() => { if (!uploadBusy) { tapHaptic(); executeUpload(); } }}
+              disabled={uploadBusy}
+              accessibilityRole="button"
+              accessibilityLabel={uploadBusy ? 'Upload running' : `Upload ${pendingAssets.length} photos`}
+              testID="upload-confirm"
+              style={({ pressed }) => ({
+                minHeight: 48,
+                borderRadius: 24,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#ffffff',
+                marginTop: 8,
+                marginBottom: 8,
+                opacity: uploadBusy ? 0.5 : (pressed ? 0.6 : 1),
+              })}
+            >
+              <Text style={{ color: '#000000', fontSize: 16, fontWeight: '700' }} numberOfLines={1}>
+                {uploadBusy ? 'Upload running…' : `Upload ${pendingAssets.length} ${pendingAssets.length === 1 ? 'photo' : 'photos'}`}
+              </Text>
+            </Pressable>
+          )}
+        />
+      )}
       {bulkTagsOpen && (
         <TagsSheet
           tags={bulkCommonTags}

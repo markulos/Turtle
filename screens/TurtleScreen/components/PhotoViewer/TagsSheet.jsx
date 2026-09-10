@@ -60,6 +60,8 @@ export default function TagsSheet({
   title = 'Tags',
   subtitle,
   bottomInset = 0,
+  /** A fixed row under the chips (e.g. an Upload button). */
+  footer,
 }) {
   const tags = useMemo(() => (Array.isArray(tagsProp) ? tagsProp : parseTags(item)), [tagsProp, item]);
   const [draft, setDraft] = useState('');
@@ -162,7 +164,7 @@ export default function TagsSheet({
   );
 
   return (
-    <ViewerSheet title={title} subtitle={subtitle} bottomInset={bottomInset} onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} testID="tags-sheet">
+    <ViewerSheet title={title} subtitle={subtitle} bottomInset={bottomInset} onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} footer={footer} testID="tags-sheet">
       {query.length > 0 ? (
         <>
           {!exactExists && (
