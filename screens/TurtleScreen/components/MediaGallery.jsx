@@ -4900,7 +4900,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
           tags={selectedTags}
           suggestions={globalAlbums}
           onChange={setSelectedTags}
+          // Drag-down / scrim = cancel (the batch is dropped). DONE = UPLOAD:
+          // the header button proceeds with the batch and the chosen tags.
           onClose={dismissUploadModal}
+          doneLabel={uploadBusy ? 'Busy' : 'Upload'}
+          onDone={() => { if (!uploadBusy) { tapHaptic(); executeUpload(); } }}
           theme={theme}
           title={`Upload ${pendingAssets.length} ${pendingAssets.length === 1 ? 'photo' : 'photos'}`}
           subtitle="Tags go on every photo in this upload"
