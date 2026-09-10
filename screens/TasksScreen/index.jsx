@@ -11,7 +11,6 @@ import {
   Alert,
   Keyboard,
   Platform,
-  LayoutAnimation,
   TextInput,
   ScrollView,
   useWindowDimensions,
@@ -113,8 +112,6 @@ const eventIsOver = (item, nowMs) => {
   return new Date(y, m - 1, d, 23, 59, 59, 999).getTime() <= nowMs;
 };
 import {
-  ProjectDropdown,
-  configureProjectDropdownAnimation,
   FilterMenu,
   TaskStatsModal,
   ProjectManager,
@@ -132,16 +129,9 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useCommandBus } from '../../context/CommandBusContext';
 import { useOpenTarget } from '../../context/OpenTargetContext';
 import { useCelebration } from '../../context/CelebrationContext';
+import BoardRail from './components/BoardRail';
+import StatusSegment from './components/StatusSegment';
 
-// Must match MAX_HEIGHT in ProjectDropdown.jsx — the page below the picker
-// is translated down by exactly this much as the picker reveals, so the two
-// stay seamlessly joined.
-const PROJECT_DROPDOWN_HEIGHT = 360;
-// Same duration + easing the ProjectDropdown uses for its own height reveal,
-// so the page-shift below tracks the picker's bottom edge frame-for-frame.
-const DROPDOWN_OPEN_MS = 280;
-const DROPDOWN_CLOSE_MS = 240;
-const DROPDOWN_EASE = ReEasing.bezier(0.4, 0, 0.2, 1);
 
 // Distinct project colours that read well against the green/yellow palette.
 // Module-level (a pure constant) so it isn't rebuilt on every render.
@@ -489,7 +479,6 @@ export default function TasksScreen() {
   const route = useRoute();
   const { dispatch: dispatchCommand } = useCommandBus();
   const menuAnimation = useRef(new Animated.Value(0)).current;
-  const [showDropdown, setShowDropdown] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showStats, setShowStats] = useState(false);
   // Mirror of the calendar's selected day (CalendarView owns it; it reports
@@ -507,6 +496,9 @@ export default function TasksScreen() {
   // Date (YYYY-MM-DD) to pre-fill when creating from a tapped calendar day's
   // "+" button. Null for the FAB create menu (no specific day chosen).
   const [newItemDate, setNewItemDate] = useState(null);
+  // The board a new task is born into (the rail's selection at the moment the
+  // + key was pressed; null = the form's own default).
+  const [newItemProject, setNewItemProject] = useState(null);
   const [showDetail, setShowDetail] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   // True when the edit form was reached by continuing the calendar quick
@@ -520,7 +512,13 @@ export default function TasksScreen() {
     (id) => setExpandedTaskId((prev) => (prev === id ? null : id)),
     [],
   );
-  const [showIncompleteOnly, setShowIncompleteOnly] = useState(true);
+  // Status keys in the header (StatusSegment): 'todo' | 'done' | 'all'.
+  // `showIncompleteOnly` stays as the derived boolean the calendar / tree /
+  // agenda already understand; 'done' is applied on top (see doneOnly).
+  const [statusFilter, setStatusFilter] = useState('todo');
+  const showIncompleteOnly = statusFilter === 'todo';
+  const doneOnly = statusFilter === 'done';
+  const setShowIncompleteOnly = useCallback((v) => setStatusFilter(v ? 'todo' : 'all'), []);
   const [selectedProject, setSelectedProject] = useState('All');
   const [selectedTags, setSelectedTags] = useState([]);
   const [tagFilterMode, setTagFilterMode] = useState('any');
@@ -581,24 +579,6 @@ export default function TasksScreen() {
   // (above the hook) left `tasks` undefined on first render, throwing
   // "cannot read property 'filter' of undefined".
 
-  // ── Project-picker reveal (smooth) ───────────────────────────────────
-  // The picker itself is an absolute overlay (see ProjectDropdown). To keep
-  // the original "the page slides down as the picker opens" look WITHOUT
-  // relayouting the heavy list/calendar every frame, we push the page with a
-  // compositor-only transform: translateY = progress * height. progress runs
-  // on the UI thread with the exact same timing/easing as the picker's own
-  // height animation, so the page's top edge stays glued to the picker's
-  // bottom edge throughout the open/close.
-  const dropdownProgress = useSharedValue(showDropdown ? 1 : 0);
-  useEffect(() => {
-    dropdownProgress.value = withTiming(showDropdown ? 1 : 0, {
-      duration: showDropdown ? DROPDOWN_OPEN_MS : DROPDOWN_CLOSE_MS,
-      easing: DROPDOWN_EASE,
-    });
-  }, [showDropdown, dropdownProgress]);
-  const contentShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: dropdownProgress.value * PROJECT_DROPDOWN_HEIGHT }],
-  }));
 
   // Inline add task state per project
   const [inlineAddingProject, setInlineAddingProject] = useState(null);
@@ -618,28 +598,21 @@ export default function TasksScreen() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   
   useEffect(() => {
-    // Animate the list's bottom-padding change along the SAME curve and
-    // duration iOS reports for the keyboard, so the content rises in lockstep
-    // with it instead of snapping. LayoutAnimation's built-in `keyboard` type
-    // is exactly the OS keyboard curve; `e.duration` matches its speed.
-    const syncToKeyboard = (e) => {
-      LayoutAnimation.configureNext({
-        duration: e?.duration || 250,
-        update: { type: LayoutAnimation.Types.keyboard },
-      });
-    };
+    // The keyboard height only PADS the list's bottom so content can scroll
+    // clear of the keyboard; nothing on screen is re-laid-out to make room
+    // (house keyboard rule). The global LayoutAnimation this used to fire on
+    // every keyboard event captured every unrelated layout change in flight
+    // — sheets, chips and rows all eased a beat behind the keyboard.
     const showListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
       (e) => {
-        syncToKeyboard(e);
         setKeyboardHeight(e.endCoordinates.height);
         setKeyboardVisible(true);
       }
     );
     const hideListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      (e) => {
-        syncToKeyboard(e);
+      () => {
         setKeyboardHeight(0);
         setKeyboardVisible(false);
       }
@@ -716,21 +689,31 @@ export default function TasksScreen() {
   }, [owners]);
 
   // ── Selected-day completion (drives the header count + full-width bar) ──
-  // The header now reflects just the tasks SCHEDULED for the selected calendar
-  // day (under the active project/tag filter), completed vs total — tap it to
-  // open the stats panel for all-time / per-project breakdowns. Mirrors the
-  // modal's `day` logic so the two always agree.
+  // Per-board progress for the rail — done / total / overdue, board-wide
+  // (the rail is the status view; filters scope the list, not the rail).
+  const boardStats = useMemo(() => {
+    const today = localTodayStr();
+    const stats = { All: { total: 0, done: 0, overdue: 0 } };
+    for (const name of projects) stats[name] = { total: 0, done: 0, overdue: 0 };
+    for (const t of tasks) {
+      if (!t || itemTypeOf(t) !== 'task') continue;
+      const done = !!(t.completed || isTaskDoneNow(t));
+      const late = !done && !!t.dueDate && t.dueDate < today;
+      const buckets = [stats.All];
+      if (t.project && stats[t.project]) buckets.push(stats[t.project]);
+      for (const b of buckets) { b.total += 1; if (done) b.done += 1; if (late) b.overdue += 1; }
+    }
+    return stats;
+  }, [tasks, projects]);
+  // The day the calendar is parked on, for the header's + key.
   const dayStats = useMemo(() => {
     const d = calendarDate instanceof Date ? calendarDate : new Date();
     const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    // Same shared active-filter predicate as the tree/calendar/agenda (owner +
-    // project + tags) so the header count agrees with what's actually shown.
-    const filters = { selectedProject, selectedTags, tagFilterMode, selectedOwners };
-    const scheduled = tasks.filter((t) => t.dueDate === dateStr && taskPassesFilters(t, filters));
-    const completed = scheduled.filter((t) => t.completed).length;
-    return { total: scheduled.length, completed };
-  }, [tasks, calendarDate, selectedProject, selectedTags, tagFilterMode, selectedOwners]);
-  const dayPct = dayStats.total ? Math.round((dayStats.completed / dayStats.total) * 100) : 0;
+    return { dateStr };
+  }, [calendarDate]);
+  // Tasks under the DONE key: the calendar and the tree take a pre-filtered
+  // list; the agenda gates below.
+  const doneTasks = useMemo(() => (doneOnly ? tasks.filter((t) => t && (t.completed || isTaskDoneNow(t))) : tasks), [tasks, doneOnly]);
 
   // Create a memoized mapping of project names to colors
   const projectColorMap = useMemo(() => {
@@ -748,7 +731,7 @@ export default function TasksScreen() {
   };
   
   // Use collapsible tasks hook - ALL collapsed by default
-  const collapsible = useCollapsibleTasks(tasks, projects, {
+  const collapsible = useCollapsibleTasks(doneTasks, projects, {
     showIncompleteOnly,
     selectedProject,
     selectedTags,
@@ -863,9 +846,11 @@ export default function TasksScreen() {
     // of bug the frozen order exists to prevent.
     // Only completed / done-now rows drop; overdue-but-OPEN tasks are still
     // incomplete, so they stay in the Past band.
-    const inScope = showIncompleteOnly
+    const inScope = statusFilter === 'todo'
       ? visible.filter((t) => !(t.completed || isTaskDoneNow(t)))
-      : visible;
+      : statusFilter === 'done'
+        ? visible.filter((t) => t.completed || isTaskDoneNow(t))
+        : visible;
     const past = inScope
       .filter(isPast)
       .map((t) => ({ t, k: stampOf(t) }))
@@ -887,7 +872,7 @@ export default function TasksScreen() {
     ];
     return { past, upcoming };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [membershipKey, orderEpoch, selectedProject, selectedTags, tagFilterMode, selectedOwners, searchQuery, showIncompleteOnly]);
+  }, [membershipKey, orderEpoch, selectedProject, selectedTags, tagFilterMode, selectedOwners, searchQuery, statusFilter]);
 
   // Live lookup for hydration — fresh objects every tasks change, so a ticked
   // row repaints (✓, strikethrough) in its frozen slot.
@@ -1189,9 +1174,8 @@ export default function TasksScreen() {
   // compensation lands invisibly because nothing is moving. By the time the
   // user scrolls up, the dummies are already there: plain native scrolling
   // into pre-existing content, zero gesture-time mounting, zero readjustment.
-  // Deferred while the keyboard is transitioning (its global LayoutAnimation
-  // would capture the mount); the keyboardVisible dep re-runs the timer once
-  // it settles.
+  // Deferred while the keyboard is up (the viewport is not still while it
+  // moves); the keyboardVisible dep re-runs the timer once it settles.
   useEffect(() => {
     if (pastArmed || pastTasks.length === 0 || keyboardVisible) return;
     const t = setTimeout(() => {
@@ -1637,10 +1621,11 @@ export default function TasksScreen() {
   // point (the FAB-equivalent "Add new task" button and the calendar day "+"
   // both route through it with type 'task') — TaskForm itself opens COLLAPSED
   // for new items (no initialData), so the fast path is preserved.
-  const openCreateForm = useCallback((type, date) => {
+  const openCreateForm = useCallback((type, date, project) => {
     setEditingTask(null);
     setNewItemType(type || 'task');
     setNewItemDate(date || null);
+    setNewItemProject(project || null);
     setShowTaskForm(true);
   }, []);
 
@@ -1720,7 +1705,7 @@ export default function TasksScreen() {
   }
 
   // Check if any filters active
-  const hasActiveFilters = !showIncompleteOnly || selectedTags.length > 0 || selectedOwners.length > 0;
+  const hasActiveFilters = selectedTags.length > 0 || selectedOwners.length > 0;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -1743,43 +1728,58 @@ export default function TasksScreen() {
         pointerEvents="none"
       />
 
-      {/* Custom Header */}
+      {/* Header — one row of keys (view pill · status keys · filter · +),
+          then the board rail. Nothing collapses, nothing shifts the page:
+          the board picker IS the rail, the day count lives on its cards. */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.projectSelector}
-          // Toggle the inline picker. configureNext fires BEFORE the
-          // state change so the native UIManager registers the layout
-          // animation against the same commit that adds/removes the
-          // dropdown. Running it inside the dropdown's own useEffect
-          // (which is post-commit) was the cause of the previous
-          // "doesn't animate" bug — the animation queued but the
-          // layout had already settled.
-          onPress={() => {
-            configureProjectDropdownAnimation();
-            setShowDropdown(v => !v);
-          }}
-        >
-          <View style={[styles.projectSelectorSquare, { backgroundColor: getProjectColor(selectedProject) }]} />
-          <Text style={styles.projectSelectorText} numberOfLines={1}>
-            {selectedProject === 'All' ? 'All' : boardLabel(selectedProject)}
-          </Text>
-          {/* Chevron flips 180° while the picker is open. The
-              transform sits on a small wrapper because Icon doesn't
-              accept transform directly. */}
-          <View style={{ transform: [{ rotate: showDropdown ? '180deg' : '0deg' }] }}>
-            <Icon name="chevron-down" size={18} color={theme.colors.textTertiary} />
-          </View>
-        </TouchableOpacity>
-        
-        <View style={styles.headerRight}>
-          {/* Filter button — lives in the header (was a floating FAB at the
-              bottom-right that overlapped the calendar/list content). Opens
-              the same FilterMenu bottom-sheet; shows a count badge when any
-              filter is active. */}
+        <View style={styles.viewToggle}>
+          {/* Sliding active pill (bound to the pager scroll). */}
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.viewToggleIndicator, { transform: [{ translateX: toggleIndicatorX }] }]}
+          />
+          <TouchableOpacity
+            style={styles.viewBtn}
+            onPressIn={() => tapHaptic()}
+            onPress={() => goToView('calendar')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Calendar view"
+          >
+            {/* Active (bright) icon fades in as this page becomes current;
+                the inactive (dim) icon underneath fades out. */}
+            <Animated.View style={[styles.viewBtnIconLayer, { opacity: calActiveOp }]}>
+              <Icon name="calendar-month" size={20} color={theme.colors.textPrimary} />
+            </Animated.View>
+            <Animated.View style={{ opacity: listActiveOp }}>
+              <Icon name="calendar-month" size={20} color={theme.colors.textTertiary} />
+            </Animated.View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.viewBtn}
+            onPressIn={() => tapHaptic()}
+            onPress={() => goToView('list')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="List view"
+          >
+            <Animated.View style={[styles.viewBtnIconLayer, { opacity: listActiveOp }]}>
+              <Icon name="format-list-bulleted" size={20} color={theme.colors.textPrimary} />
+            </Animated.View>
+            <Animated.View style={{ opacity: calActiveOp }}>
+              <Icon name="format-list-bulleted" size={20} color={theme.colors.textTertiary} />
+            </Animated.View>
+          </TouchableOpacity>
+        </View>
+
+        <StatusSegment value={statusFilter} onChange={setStatusFilter} theme={theme} />
+        <View style={styles.headerKeys}>
           <TouchableOpacity
             style={[styles.headerFilterBtn, hasActiveFilters && styles.headerFilterBtnActive]}
             onPress={() => setShowFilterMenu(true)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={hasActiveFilters ? 'Filters, active' : 'Filters'}
           >
             <Icon
               name="filter-variant"
@@ -1789,76 +1789,40 @@ export default function TasksScreen() {
             {hasActiveFilters && (
               <View style={styles.headerFilterBadge}>
                 <Text style={styles.headerFilterBadgeText}>
-                  {selectedTags.length + selectedOwners.length + (!showIncompleteOnly ? 1 : 0)}
+                  {selectedTags.length + selectedOwners.length}
                 </Text>
               </View>
             )}
           </TouchableOpacity>
-
-          {/* View Mode Toggle — a sliding segmented control modelled on the
-              Photos tab bar: the active pill + the icon cross-fades track the
-              pager's scroll offset 1:1, so it glides with the swipe (and on
-              tap) instead of snapping. Calendar = left page, list = right. */}
-          <View style={styles.viewToggle}>
-            {/* Sliding active pill (bound to the pager scroll). */}
-            <Animated.View
-              pointerEvents="none"
-              style={[styles.viewToggleIndicator, { transform: [{ translateX: toggleIndicatorX }] }]}
-            />
-            <TouchableOpacity
-              style={styles.viewBtn}
-              onPressIn={() => tapHaptic()}
-              onPress={() => goToView('calendar')}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Calendar view"
-            >
-              {/* Active (bright) icon fades in as this page becomes current;
-                  the inactive (dim) icon underneath fades out. */}
-              <Animated.View style={[styles.viewBtnIconLayer, { opacity: calActiveOp }]}>
-                <Icon name="calendar-month" size={20} color={theme.colors.textPrimary} />
-              </Animated.View>
-              <Animated.View style={{ opacity: listActiveOp }}>
-                <Icon name="calendar-month" size={20} color={theme.colors.textTertiary} />
-              </Animated.View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.viewBtn}
-              onPressIn={() => tapHaptic()}
-              onPress={() => goToView('list')}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="List view"
-            >
-              <Animated.View style={[styles.viewBtnIconLayer, { opacity: listActiveOp }]}>
-                <Icon name="format-list-bulleted" size={20} color={theme.colors.textPrimary} />
-              </Animated.View>
-              <Animated.View style={{ opacity: calActiveOp }}>
-                <Icon name="format-list-bulleted" size={20} color={theme.colors.textTertiary} />
-              </Animated.View>
-            </TouchableOpacity>
-          </View>
-          
-          {/* The header count now reflects just the SELECTED DAY's tasks
-              (completed / scheduled). Tap to open the stats panel where the
-              metric can switch to all-time + per-project breakdowns. */}
+          {/* The + key: a task on the selected board, on the calendar's day. */}
           <TouchableOpacity
-            style={styles.statsContainer}
-            onPress={() => setShowStats(true)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.7}
+            style={styles.headerAddKey}
+            onPressIn={() => tapHaptic()}
+            onPress={() => openCreateForm(
+              'task',
+              viewMode === 'calendar' ? dayStats.dateStr : null,
+              selectedProject !== 'All' ? selectedProject : null,
+            )}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityRole="button"
+            accessibilityLabel={selectedProject !== 'All' ? `New task in ${boardLabel(selectedProject)}` : 'New task'}
+            testID="header-add-task"
           >
-            <Text style={styles.statsText}>{dayStats.completed}/{dayStats.total}</Text>
+            <Icon name="plus" size={22} color={theme.colors.background} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Full-bleed day-completion bar, directly under the header — a 3px
-          solid-white fill on a faint track, matching the photos loading bar.
-          Spans the whole screen width; reflects the selected day's ratio. */}
-      <View style={styles.dayProgressTrack}>
-        <View style={[styles.dayProgressFill, { width: `${dayPct}%` }]} />
-      </View>
+      <BoardRail
+        boards={projects}
+        selected={selectedProject}
+        stats={boardStats}
+        colorOf={getProjectColor}
+        onSelect={setSelectedProject}
+        onManage={() => setShowProjectManager(true)}
+        onAddBoard={() => setShowProjectManager(true)}
+        theme={theme}
+      />
 
       {/* Project-picker overlay host. The picker (rendered at the bottom of
           this host) is an absolute overlay pinned just below the header.
@@ -1869,21 +1833,12 @@ export default function TasksScreen() {
           can't spill over the tab bar / FAB. Modals inside render via RN
           portals, so the transform doesn't touch them. */}
       <View style={styles.dropdownHost}>
-      <Reanimated.View style={[styles.dropdownShiftLayer, contentShiftStyle]}>
+      <View style={styles.dropdownShiftLayer}>
 
       {/* Active Filters */}
       {hasActiveFilters && (
         <View style={styles.activeFiltersBar}>
           <Animated.ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {!showIncompleteOnly && (
-              <View style={[styles.filterChip, styles.warningChip]}>
-                <Icon name="eye-off" size={12} color={theme.colors.accentWarning} />
-                <Text style={[styles.filterChipText, styles.warningChipText]}>Showing Completed</Text>
-                <TouchableOpacity onPress={() => setShowIncompleteOnly(true)}>
-                  <Icon name="close" size={14} color={theme.colors.textTertiary} />
-                </TouchableOpacity>
-              </View>
-            )}
             {selectedTags.map(tag => (
               <View key={tag} style={[styles.filterChip, styles.tagFilterChip]}>
                 <Icon name="tag" size={12} color={theme.colors.textPrimary} />
@@ -1946,12 +1901,12 @@ export default function TasksScreen() {
             );
           },
           clearFilters: () => {
-            setShowIncompleteOnly(true);
+            setStatusFilter('todo');
             setSelectedTags([]);
             setTagFilterMode('any');
             setSelectedOwners([]);
           },
-          hasActiveFilters: selectedTags.length > 0 || !showIncompleteOnly || selectedOwners.length > 0
+          hasActiveFilters: selectedTags.length > 0 || selectedOwners.length > 0
         }}
         animation={menuAnimation}
       />
@@ -1983,6 +1938,7 @@ export default function TasksScreen() {
         initialData={editingTask}
         initialType={newItemType}
         initialDate={newItemDate}
+        initialProject={newItemProject}
         projects={projects}
         allTags={allTags}
         onAddProject={addProject}
@@ -2104,7 +2060,7 @@ export default function TasksScreen() {
         {/* Page 0 — Calendar */}
         <View style={{ width: pagerSize.width, height: pagerSize.height }}>
         <CalendarView
-          tasks={tasks}
+          tasks={doneTasks}
           selectedProject={selectedProject}
           selectedTags={selectedTags}
           tagFilterMode={tagFilterMode}
@@ -2384,32 +2340,8 @@ export default function TasksScreen() {
         </View>
         </View>
       </Animated.ScrollView>
-      </Reanimated.View>
+      </View>
 
-      {/* Project picker — absolute overlay on top of the shift layer. Its
-          own height/opacity reveal (ProjectDropdown.jsx) is byte-for-byte
-          unchanged; it just no longer sits in flow, so it pushes nothing.
-          The shift layer above moves with the same progress, so the page
-          stays glued to the picker's bottom edge through the open/close. */}
-      <ProjectDropdown
-        visible={showDropdown}
-        onClose={() => {
-          configureProjectDropdownAnimation();
-          setShowDropdown(false);
-        }}
-        projects={projects}
-        tasks={tasks}
-        selected={selectedProject}
-        onSelect={(project) => {
-          configureProjectDropdownAnimation();
-          setSelectedProject(project);
-          setShowDropdown(false);
-        }}
-        onManage={() => setShowProjectManager(true)}
-        onAddProject={addProject}
-        getProjectColor={getProjectColor}
-        incomingShareLabels={sharedInLabels}
-      />
       </View>
 
       {/* The "+" create button now lives in the day-planner header's right
@@ -2676,61 +2608,31 @@ const createStyles = (theme) => StyleSheet.create({
     paddingHorizontal: 40,
   },
   
+  // The key row: view pill · status keys · filter · +. No bottom rule —
+  // the board rail under it is the header's second line.
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: theme.colors.border,
+    paddingTop: 8,
+    paddingBottom: 2,
   },
-  projectSelector: {
+  headerKeys: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 0.5,
-    borderColor: theme.colors.border,
+    gap: 8,
+    marginLeft: 'auto',
   },
-  projectSelectorText: { 
-    fontSize: theme.typography.body, 
-    fontWeight: '600', 
-    marginLeft: 8, 
-    marginRight: 8,
-    color: theme.colors.textPrimary 
-  },
-  projectSelectorSquare: {
-    width: 16,
-    height: 16,
-    borderRadius: 3,
-  },
-  statsContainer: {
-    alignItems: 'flex-end',
+  // A lit round key: text colour as the fill, the page colour as the glyph.
+  headerAddKey: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: theme.colors.textPrimary,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  statsText: {
-    fontSize: theme.typography.body,
-    color: theme.colors.textTertiary,
-  },
-  // Full-width day-completion bar under the header — photos-loading style:
-  // a 3px solid-white fill, edge to edge. The track itself is TRANSPARENT so
-  // the strip under the header stays a single clean hairline (the header's
-  // own borderBottom); a filled track read as a second, thicker line stacked
-  // on it. Only the completed portion paints.
-  dayProgressTrack: {
-    width: '100%',
-    height: 3,
-    backgroundColor: 'transparent',
-    overflow: 'hidden',
-  },
-  dayProgressFill: {
-    height: 3,
-    backgroundColor: 'rgba(255,255,255,0.95)',
-  },
-  
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',

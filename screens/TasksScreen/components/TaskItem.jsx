@@ -18,7 +18,7 @@ import TaskCountdownBadge from './TaskCountdownBadge';
 // done the moment you touch it (the actual save is optimistic + background).
 // Now sourced from the shared util so every screen buzzes identically.
 import { tapHaptic, impactHaptic, notifyHaptic } from '../../../utils/haptics';
-import { invertedCardPalette } from '../utils/cardPalette';
+import { insetCardPalette } from '../utils/cardPalette';
 
 const TaskItemImpl = ({
   item,
@@ -43,7 +43,7 @@ const TaskItemImpl = ({
 }) => {
   const { theme, timeFormat } = useTheme();
   // Inverted card (black on light / white on dark) — see utils/cardPalette.
-  const inv = invertedCardPalette(theme);
+  const inv = insetCardPalette(theme);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [editingSubtaskId, setEditingSubtaskId] = useState(null);
   const [editSubtaskTitle, setEditSubtaskTitle] = useState('');
@@ -404,15 +404,16 @@ export const TaskItem = React.memo(TaskItemImpl, (prev, next) =>
 );
 
 const createStyles = (theme) => {
-  const inv = invertedCardPalette(theme);
+  const inv = insetCardPalette(theme);
   return StyleSheet.create({
   container: {
     backgroundColor: inv.card,
     marginHorizontal: 12,
     marginBottom: 8,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: inv.edge,
+    borderTopColor: inv.edgeTop, // the recess catches light along its top edge
     // Depth: shadow + elevation + the lit edge above. No overflow:hidden
     // (iOS would mask the shadow); the expanded section keeps the card colour
     // so nothing needs clipping.

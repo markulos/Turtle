@@ -10,9 +10,10 @@ import {
   StyleSheet,
   Platform,
   Keyboard,
-  KeyboardAvoidingView,
   ScrollView,
   Animated,
+  Easing,
+  useWindowDimensions,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../context/ThemeContext';
@@ -109,6 +110,33 @@ export const ProjectManager = ({
   // drag ending in a close anyway (handleClose does it).
   const { panHandlers, scrollProps, sheetDragStyle } = useSheetDismiss(handleClose, visible);
 
+  // Keyboard: measure the name field against the keyboard's top edge and lift
+  // the sheet ONLY by what it is covered (house rule) — on a native-driver
+  // transform matched to the keyboard's duration. No KeyboardAvoidingView:
+  // that re-laid the sheet out on the JS thread a beat behind the keyboard.
+  const { height: windowH } = useWindowDimensions();
+  const liftAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const ios = Platform.OS === 'ios';
+    const run = (toValue, duration) => Animated.timing(liftAnim, {
+      toValue,
+      duration: duration || 250,
+      easing: Easing.bezier(0.17, 0.59, 0.4, 0.77),
+      useNativeDriver: true,
+    }).start();
+    const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
+      const kb = e?.endCoordinates?.height || 0;
+      const node = inputRef.current;
+      if (!node || typeof node.measureInWindow !== 'function') { run(-kb, e?.duration); return; }
+      node.measureInWindow((x, y, w, h) => {
+        const covered = (y + h + 12) - (windowH - kb);
+        run(covered > 0 ? -Math.min(covered, kb) : 0, e?.duration);
+      });
+    });
+    const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', (e) => run(0, e?.duration));
+    return () => { show.remove(); hide.remove(); };
+  }, [liftAnim, windowH]);
+
   return (
     <Modal
       animationType="none"
@@ -121,9 +149,8 @@ export const ProjectManager = ({
             touch events from the ScrollView inside the sheet. */}
         <Pressable style={styles.backdrop} onPress={handleClose} />
 
-        <KeyboardAvoidingView
-          style={styles.sheetWrap}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <Animated.View
+          style={[styles.sheetWrap, { transform: [{ translateY: liftAnim }] }]}
           pointerEvents="box-none"
         >
           {/* The whole card is the pull-down zone; the board list below reports
@@ -186,7 +213,7 @@ export const ProjectManager = ({
               <Text style={styles.closeBtnText}>Close Edit</Text>
             </TouchableOpacity>
           </Animated.View>
-        </KeyboardAvoidingView>
+        </Animated.View>
       </Animated.View>
     </Modal>
   );

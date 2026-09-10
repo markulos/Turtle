@@ -20,7 +20,6 @@ import {
   TextInput,
   Keyboard,
   InputAccessoryView,
-  KeyboardAvoidingView,
   StatusBar,
   // RN's own Share — the only one that can hand the OS a URL rather than a
   // file. expo-sharing shares files exclusively, which is exactly the thing a
@@ -3773,8 +3772,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
 
       {/* Expanding Inline Bulk Console */}
       {isSelectMode && (
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'position' : undefined}
+        <View
           // Sits ABOVE the floating tab bar — these are the bulk actions
           // (share / tag / delete) and they can't be scrolled out from under it.
           style={{ position: 'absolute', bottom: Math.max(insets.bottom + 24, tabBarH + 12), left: 16, right: 16, zIndex: 50 }}
@@ -4054,7 +4052,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
             </Animated.View>
             </View>
           )}
-        </KeyboardAvoidingView>
+        </View>
       )}
 
       {/* The pre-upload tag picker is the TagsSheet mounted at the screen root

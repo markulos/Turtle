@@ -1,47 +1,47 @@
-// Task cards are INVERTED against the screen (docs/STYLE-RULES.md §1): a
-// black card with white text in light mode, a white card with black text in
-// dark mode, so every card stands off the page instead of blending into it.
+// Task cards are INSET panels (docs/STYLE-RULES.md §1): a surface one step
+// BELOW the page it sits on, with a hairline rim a touch lighter than the
+// panel (the light catching the edge of a recess) — the Teenage-Engineering /
+// Scandinavian read of the reference tile: dark panel, thin lighter border,
+// bold value, muted caption. No drop shadow: a recess casts none.
 // Both TimelineTaskRow (calendar day panel, agenda) and TaskItem (the task
 // list) draw from this one palette so they can never drift apart.
-// Depth: a soft drop shadow (iOS) + elevation (Android). The same values in
-// both modes — on the dark page the shadow is quieter by nature, and the white
-// card already stands off the black.
-const SHADOW = {
-  shadowColor: '#000000',
-  shadowOpacity: 0.28,
-  shadowRadius: 10,
-  shadowOffset: { width: 0, height: 5 },
-  elevation: 6,
-};
-
-export function invertedCardPalette(theme) {
+export function insetCardPalette(theme) {
   const dark = theme?.mode === 'dark';
   return dark
     ? {
-      card: '#FFFFFF',
-      text: '#000000',
-      sub: 'rgba(0,0,0,0.62)',
-      muted: 'rgba(0,0,0,0.45)',
-      border: 'rgba(0,0,0,0.12)',
-      field: 'rgba(0,0,0,0.06)',
-      track: 'rgba(0,0,0,0.12)',
+      /** A step below the black page — the recess. */
+      card: '#0E0E10',
+      text: '#E6E6E8',
+      sub: 'rgba(255,255,255,0.62)',
+      muted: 'rgba(255,255,255,0.45)',
+      border: 'rgba(255,255,255,0.10)',
+      field: 'rgba(255,255,255,0.06)',
+      track: 'rgba(255,255,255,0.12)',
       /** Text drawn ON a `text`-coloured badge — i.e. the card colour. */
-      onText: '#FFFFFF',
-      /** The card's hairline edge — a faint dark rim on the white card. */
-      edge: 'rgba(0,0,0,0.10)',
-      shadow: SHADOW,
+      onText: '#0E0E10',
+      /** The rim: a hairline lighter than the panel, all the way round. */
+      edge: 'rgba(255,255,255,0.10)',
+      /** The lit top edge of the recess. */
+      edgeTop: 'rgba(255,255,255,0.16)',
+      /** Small icon tile inside a card (the cup in the reference). */
+      tile: '#1C1D20',
+      shadow: {},
     }
     : {
-      card: '#000000',
-      text: '#FFFFFF',
-      sub: 'rgba(255,255,255,0.72)',
-      muted: 'rgba(255,255,255,0.5)',
-      border: 'rgba(255,255,255,0.18)',
-      field: 'rgba(255,255,255,0.1)',
-      track: 'rgba(255,255,255,0.18)',
-      onText: '#000000',
-      /** A lit top edge so the black card reads as a raised object, not a hole. */
-      edge: 'rgba(255,255,255,0.16)',
-      shadow: SHADOW,
+      card: '#F3F3F5',
+      text: '#111111',
+      sub: 'rgba(0,0,0,0.62)',
+      muted: 'rgba(0,0,0,0.45)',
+      border: 'rgba(0,0,0,0.08)',
+      field: 'rgba(0,0,0,0.05)',
+      track: 'rgba(0,0,0,0.10)',
+      onText: '#F3F3F5',
+      edge: 'rgba(0,0,0,0.08)',
+      edgeTop: 'rgba(0,0,0,0.12)',
+      tile: '#E7E7EA',
+      shadow: {},
     };
 }
+
+/** @deprecated name kept for one release; the palette is inset, not inverted. */
+export const invertedCardPalette = insetCardPalette;

@@ -1732,22 +1732,17 @@ export const CalendarView = ({
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   
   useEffect(() => {
-    // Ride the keyboard's own curve/duration so the day-pane's bottom padding
-    // tracks the keyboard instead of snapping. `Types.keyboard` is the OS
-    // keyboard curve; `e.duration` matches its speed.
-    const syncToKeyboard = (e) => {
-      LayoutAnimation.configureNext({
-        duration: e?.duration || 250,
-        update: { type: LayoutAnimation.Types.keyboard },
-      });
-    };
+    // Pads the day pane's bottom so rows can scroll clear of the keyboard.
+    // No LayoutAnimation on the event: a global one captured every other
+    // layout change of that frame (the inspector, the fold) and dragged them
+    // behind the keyboard.
     const showListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      (e) => { syncToKeyboard(e); setKeyboardHeight(e.endCoordinates.height); }
+      (e) => setKeyboardHeight(e.endCoordinates.height)
     );
     const hideListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      (e) => { syncToKeyboard(e); setKeyboardHeight(0); }
+      () => setKeyboardHeight(0)
     );
     return () => {
       showListener.remove();

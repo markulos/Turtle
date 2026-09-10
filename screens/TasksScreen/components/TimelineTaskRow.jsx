@@ -7,7 +7,7 @@ import { itemTypeOf, formatDueDate } from '../utils/taskHelpers';
 import { tapHaptic } from '../../../utils/haptics';
 import TaskCountdownBadge from './TaskCountdownBadge';
 import { HatchBackdrop } from './HatchBackdrop';
-import { invertedCardPalette } from '../utils/cardPalette';
+import { insetCardPalette } from '../utils/cardPalette';
 
 // ── Quick time helpers (self-contained so this row works in any list) ──────────
 // Format "HH:MM" honoring the user's 12/24h preference.
@@ -66,7 +66,7 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
   // The card is INVERTED against the screen (black on light, white on dark —
   // utils/cardPalette). `cardColor` is accepted for compatibility but the
   // inverted fill wins: a tone override would put the card back into the page.
-  const inv = invertedCardPalette(theme);
+  const inv = insetCardPalette(theme);
   const cText = inv.text;
   const cSub = inv.sub;
   const cMuted = inv.muted;
@@ -254,11 +254,13 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
           flex: 1,
           marginLeft: 12,
           backgroundColor: cCardBg,
-          borderRadius: 12,
+          borderRadius: 16,
           borderWidth: 1,
           // Board tasks get a hairline border in the board's colour (matches the
           // hatch backdrop); everything else keeps the neutral card border.
           borderColor: hatchColor || cBorder,
+          // Inset: the recess catches light along its top edge.
+          borderTopColor: hatchColor || inv.edgeTop,
           paddingVertical: 9,
           paddingHorizontal: 12,
           opacity: completed ? 0.65 : 1,

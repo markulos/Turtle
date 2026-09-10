@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator,
-  KeyboardAvoidingView, Platform, Alert, StyleSheet,
+  Alert, StyleSheet, Keyboard,
 } from 'react-native';
+import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Image } from 'expo-image';
@@ -56,10 +57,47 @@ const timeAgo = (ts) => {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
+// A "swift pull down" on the timeline dismisses the keyboard: at least this
+// far, at least this fast (points per millisecond — a flick, not a scroll).
+// Same numbers as the Turtle chat.
+const SWIFT_PULL_MIN_DY = 48;
+const SWIFT_PULL_MIN_SPEED = 1.2;
+
 export default function BoardTimeline({ visible, board, onClose }) {
   const { theme } = useTheme();
   const c = theme.colors;
   const insets = useSafeAreaInsets();
+
+  // Keyboard: the list + composer column slides up on ONE UI-thread transform
+  // driven by the live keyboard height (frame-synced, follows the interactive
+  // dismiss), the same model as the Turtle chat. The header stays put above
+  // it. No KeyboardAvoidingView: that animated a layout prop from JS and
+  // re-laid the whole inverted list out per frame — the visible lag.
+  const composerMargin = Math.max(insets.bottom, 8);
+  const keyboard = useAnimatedKeyboard();
+  const keyboardLiftStyle = useAnimatedStyle(() => {
+    'worklet';
+    const kb = keyboard.height.value;
+    // The composer already rests composerMargin above the bottom; lift by the
+    // remainder so it lands 8pt above the keyboard's top edge.
+    const lift = kb > 0 ? Math.max(kb - composerMargin + 8, 0) : 0;
+    return { transform: [{ translateY: -lift }] };
+  });
+  // Swift pull-down = dismiss. The list is inverted, so a finger pulled DOWN
+  // increases contentOffset (the opposite sign from the chat's list).
+  const dragStartRef = useRef({ y: 0, t: 0 });
+  const handleDragBegin = useCallback((e) => {
+    dragStartRef.current = { y: e?.nativeEvent?.contentOffset?.y ?? 0, t: Date.now() };
+  }, []);
+  const handleDragEnd = useCallback((e) => {
+    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+    const { y: y0, t: t0 } = dragStartRef.current;
+    const dy = y - y0;
+    const dt = Math.max(1, Date.now() - t0);
+    const v = e?.nativeEvent?.velocity?.y;
+    const speed = v != null ? Math.abs(v) : dy / dt;
+    if (dy > SWIFT_PULL_MIN_DY && speed > SWIFT_PULL_MIN_SPEED) Keyboard.dismiss();
+  }, []);
   const { api, getBaseUrl, getMediaBaseUrl } = useServer();
 
   // Prefer the HTTP/2 media origin (shared expo-image cache) when the probe
@@ -434,14 +472,13 @@ export default function BoardTimeline({ visible, board, onClose }) {
 
   return (
     <EdgeSwipePage overlay visible={visible} onClose={handleClose} swipeEnabled={!lightbox && !quickOpen}>
-      <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: c.background }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        {/* Header — back chevron + the board name, mirroring the Friends page. */}
+      <View style={{ flex: 1, backgroundColor: c.background }}>
+        {/* Header — back chevron + the board name, mirroring the Friends page.
+            Opaque + above the column, which slides under it with the keyboard. */}
         <View style={{
           flexDirection: 'row', alignItems: 'center', gap: 6,
           paddingTop: insets.top + 6, paddingBottom: 10, paddingHorizontal: 10,
+          backgroundColor: c.background, zIndex: 2,
           borderBottomWidth: 1, borderBottomColor: c.border,
         }}>
           <TouchableOpacity
@@ -460,6 +497,8 @@ export default function BoardTimeline({ visible, board, onClose }) {
             <Text style={{ fontSize: 12, color: c.textTertiary }}>Board conversation</Text>
           </View>
         </View>
+
+        <Animated.View style={[{ flex: 1 }, keyboardLiftStyle]}>
 
         {loading ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -490,7 +529,11 @@ export default function BoardTimeline({ visible, board, onClose }) {
             renderItem={renderItem}
             keyExtractor={keyExtractor}
             contentContainerStyle={{ paddingVertical: 10 }}
-            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            // 'none': the timeline scrolls freely with the keyboard up; a
+            // swift pull down dismisses it (house chat rule).
+            keyboardDismissMode="none"
+            onScrollBeginDrag={handleDragBegin}
+            onScrollEndDrag={handleDragEnd}
             keyboardShouldPersistTaps="handled"
             onEndReachedThreshold={0.4}
             onEndReached={() => {
@@ -526,7 +569,8 @@ export default function BoardTimeline({ visible, board, onClose }) {
             />
           )}
         />
-      </KeyboardAvoidingView>
+        </Animated.View>
+      </View>
 
       {/* Unified task creator, pre-associated with this board (TaskForm's
           Board chip still lets it be changed — the inline expand is the

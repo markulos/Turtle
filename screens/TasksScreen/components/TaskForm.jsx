@@ -9,13 +9,15 @@ import {
   Alert,
   ScrollView,
   Keyboard,
-  KeyboardAvoidingView,
   Switch,
+  Animated,
+  Easing,
   LayoutAnimation,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import useKeyboardHeight from '../../../utils/useKeyboardHeight';
 import { useTheme } from '../../../context/ThemeContext';
 import { useServer } from '../../../context/ServerContext';
 import { FormField } from './FormField';
@@ -214,6 +216,31 @@ export const TaskForm = ({
   // board, date, time) until "More options" is tapped; EDITING opens expanded
   // so no existing value ever looks lost.
   const [showMore, setShowMore] = useState(false);
+
+  // Keyboard: the fields ScrollView keeps its size and iOS adjusts its inset
+  // natively (automaticallyAdjustKeyboardInsets — the OS scrolls the focused
+  // field into view ONLY if the keyboard covers it, which is the house rule).
+  // The pinned Save bar rides up on a native-driver transform matched to the
+  // keyboard's own duration; nothing is re-laid-out per keyboard frame.
+  const keyboardHeight = useKeyboardHeight();
+  const footerLift = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const ios = Platform.OS === 'ios';
+    const run = (toValue, duration) => Animated.timing(footerLift, {
+      toValue,
+      duration: duration || 250,
+      easing: Easing.bezier(0.17, 0.59, 0.4, 0.77),
+      useNativeDriver: true,
+    }).start();
+    const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      // The bar's own safe-area padding is dead space once it sits on the
+      // keyboard, so lift by that much less and the button lands on its edge.
+      run(-Math.max(h - (insets.bottom || 0), 0), e?.duration);
+    });
+    const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', (e) => run(0, e?.duration));
+    return () => { show.remove(); hide.remove(); };
+  }, [footerLift, insets.bottom]);
   // Inline board picker under the Board row (replaces the old Alert picker —
   // Android caps Alert at 3 buttons, silently dropping the rest).
   const [boardListOpen, setBoardListOpen] = useState(false);
@@ -658,14 +685,10 @@ export const TaskForm = ({
           is kept because a Modal renders outside the app's root, so any RNGH
           gesture inside the page needs a root to receive touches. */}
       <GestureHandlerRootView style={styles.page}>
-        {/* KeyboardAvoidingView lifts the fields on the OS keyboard curve
-            — 'padding' on iOS, 'height' on Android. A plain ScrollView holds the
-            fields; we deliberately do NOT also use KeyboardAwareScrollView,
-            because stacking the two made them fight (double-shift/overshoot). */}
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.kav}
-        >
+        {/* No KeyboardAvoidingView: the page keeps its size, the ScrollView
+            below pads for the keyboard, and the Save bar lifts on its own
+            transform (see footerLift). */}
+        <View style={styles.kav}>
           <View style={styles.pageBody}>
             {/* Fixed header bar — matches the app's page header (Boards /
                 Friends): a back chevron INLINE with the title on one row, a
@@ -695,9 +718,19 @@ export const TaskForm = ({
 
             <ScrollView
               style={styles.fieldsScroll}
-              contentContainerStyle={styles.fieldsContent}
+              contentContainerStyle={[
+                styles.fieldsContent,
+                // iOS insets natively (below); Android's edge-to-edge window
+                // does not resize for the IME, so pad by the keyboard here.
+                // Either way the lifted Save bar covers the last rows, so
+                // reserve its height while the keyboard is up.
+                { paddingBottom: (Platform.OS === 'ios' ? 0 : keyboardHeight) + (keyboardHeight ? FOOTER_RESERVE : 0) },
+              ]}
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
               keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              // 'on-drag' on both platforms: a scroll dismisses the keyboard;
+              // the proportional 'interactive' drag kept the fields half-covered.
+              keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator={true}
               // iOS otherwise floats the vertical indicator on the WRONG side /
               // inset; pinning a 1px right inset forces it to the true right
@@ -1559,10 +1592,10 @@ export const TaskForm = ({
             </ScrollView>
 
             {/* Pinned primary action — sits below the scroll and rides above the
-                keyboard (inside the KeyboardAvoidingView), so Save is reachable
-                from anywhere in the form without scrolling to the end. Dimmed
+                keyboard on a native transform, so Save is reachable from
+                anywhere in the form without scrolling to the end. Dimmed
                 until the title has content; handleSave still guards + alerts. */}
-            <View style={styles.footer}>
+            <Animated.View style={[styles.footer, { transform: [{ translateY: footerLift }] }]}>
               <TouchableOpacity
                 style={[styles.actionBtn, styles.saveBtn, !canSave && styles.saveBtnDisabled]}
                 disabled={!canSave}
@@ -1577,9 +1610,9 @@ export const TaskForm = ({
                   {isEditing ? `Save ${copy.label}` : `Add ${copy.label}`}
                 </Text>
               </TouchableOpacity>
-            </View>
+            </Animated.View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </GestureHandlerRootView>
     </EdgeSwipePage>
   );
@@ -1617,8 +1650,13 @@ function GroupHeader({ theme, label }) {
   return <Text style={styles.groupHeader}>{label}</Text>;
 }
 
+// Height the lifted Save bar covers at the bottom of the fields while the
+// keyboard is up (paddingTop 10 + 48pt button + hairline; safe-area padding
+// is cancelled by the lift).
+const FOOTER_RESERVE = 72;
+
 const createStyles = (theme, insets) => StyleSheet.create({
-  // KeyboardAvoidingView wrapper for the full-screen page.
+  // Full-height wrapper for the page (was a KeyboardAvoidingView).
   kav: {
     flex: 1,
     width: '100%',

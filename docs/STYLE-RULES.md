@@ -22,13 +22,14 @@ repo skill (loaded before any UI work) and by review.
   `experimentalBlurMethod="dimezisBlurView"` for Android) under an `rgba(10,10,12,.5–.6)` tint so
   white text stays legible whatever is behind it.
 
-- TASK CARDS are inverted against the page: light mode = black card, white text; dark mode = white card,
-  black text (`screens/TasksScreen/utils/cardPalette.js`). Everything drawn inside the card (badges,
-  sub-lines, progress tracks, inline inputs) takes its colour from that palette, never from the theme's
-  page tokens. Cards have DEPTH — the palette's `shadow` (iOS shadow + Android elevation) and `edge`
-  (a lit hairline rim) — and never `overflow: 'hidden'` on the shadowed view (iOS masks the shadow).
-  Completion rings are full-contrast against whatever they sit on (black on light, white on dark; the
-  card's text colour inside a card), 2 pt, never grey.
+- TASK CARDS are INSET panels (`screens/TasksScreen/utils/cardPalette.js`): a surface one step BELOW the page
+  (dark: #0E0E10 on black; light: #F3F3F5 on white), radius 16, a hairline rim a touch lighter than the panel with
+  the TOP edge lit a little more (`edge` / `edgeTop`) — the light catching a recess. No drop shadow. Inside:
+  bold value, muted caption, small icon TILE (`tile`) — the Teenage-Engineering / Scandinavian read of the
+  reference tile. Everything drawn inside the card (badges, sub-lines, progress tracks, inline inputs) takes
+  its colour from that palette, never from the theme's page tokens. Completion rings are full-contrast
+  against whatever they sit on (black on light, white on dark; the card's text colour inside a card), 2 pt,
+  never grey.
 
 ## 2. Text never overflows its container
 
@@ -83,10 +84,30 @@ repo skill (loaded before any UI work) and by review.
 - Keyboard + a scrolling list (the chat): the list keeps scrolling with the keyboard up
   (`keyboardDismissMode="none"`); the keyboard closes on a SWIFT pull DOWN (≥ 48 pt at ≥ 1.2 pt/ms) or a
   tap on the background — never on an ordinary scroll, never proportionally ("interactive").
+- Keyboard + a PAGE or a plain list (forms, settings, search results, profile): the same rule, no
+  KeyboardAvoidingView anywhere. The scroll body pads its bottom by the keyboard height
+  (`utils/useKeyboardHeight`; an iOS ScrollView may also set `automaticallyAdjustKeyboardInsets`, which scrolls
+  the focused field into view ONLY if the keyboard covers it). Anything pinned at the bottom (a Save bar, a
+  composer) lifts on a native-driver transform matched to the keyboard's own `e.duration` (RN Animated
+  in a Modal, `useAnimatedKeyboard` in-tree). Never fire a global `LayoutAnimation.configureNext` on a
+  keyboard event — it captures every unrelated layout change in flight and drags sheets and chips behind the
+  keyboard. `keyboardDismissMode` is `"on-drag"` on both platforms (or `"none"` + swift pull for chat
+  lists); never `"interactive"`.
 - Assistant text renders MARKDOWN (`components/MarkdownText` over `utils/markdownLite`): headings, lists,
   code, bold / italic / strike, links, quotes. Never show raw markers in a bubble.
 - Every sheet/page `ScrollView` sets `scrollIndicatorInsets={{ right: 1 }}` and `indicatorStyle`,
   or iOS parks the indicator mid-page.
+
+## 4b. Screen headers
+
+- A screen header is ONE row of keys: the view toggle, the status keys (To do · Done · All), the filter
+  key, the round + key — no dropdowns, no stats chips, no second row of pills. What the list is scoped to
+  lives in an inset-card RAIL under the row (`TasksScreen/components/BoardRail`): "All" first, one card
+  per board carrying its own progress (done / total, a hairline track, the overdue count), a dashed + key
+  last. The selected card inverts (text colour as fill) like a lit key; tap scopes, long-press manages.
+  The + key creates INTO the selected board and the selected day (active-board inheritance).
+- Header type is two sizes only: small caps 10.5 pt / letter-spacing 0.9 for labels, bold tabular 18 pt
+  for the figure. One accent per card (the board dot). Nothing else is coloured.
 
 ## 5. Inputs
 
@@ -120,5 +141,6 @@ repo skill (loaded before any UI work) and by review.
 2. Longest label, longest value, 375 pt width: nothing clipped, nothing past the edge.
 3. Every tappable ≥ 44 pt with a label; pressed state; haptic on action buttons.
 4. Sheets: in-tree, two detents (opens at 60 %, drag up to full screen, drag down closes), top search, keyboard lift, scroll-indicator inset.
+   Keyboard anywhere: no KeyboardAvoidingView, no LayoutAnimation on the event, body pads / pinned bar lifts on a native transform.
 5. Motion on the UI thread only; swift curve for shared-element moves.
 6. Ran `turtle-mobile-verify` (parse, jest, undef-audit, bundle) and listed the on-device checks.
