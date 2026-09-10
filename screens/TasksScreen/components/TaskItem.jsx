@@ -18,6 +18,7 @@ import TaskCountdownBadge from './TaskCountdownBadge';
 // done the moment you touch it (the actual save is optimistic + background).
 // Now sourced from the shared util so every screen buzzes identically.
 import { tapHaptic, impactHaptic, notifyHaptic } from '../../../utils/haptics';
+import { invertedCardPalette } from '../utils/cardPalette';
 
 const TaskItemImpl = ({
   item,
@@ -41,6 +42,8 @@ const TaskItemImpl = ({
   onToggleExpand,
 }) => {
   const { theme, timeFormat } = useTheme();
+  // Inverted card (black on light / white on dark) — see utils/cardPalette.
+  const inv = invertedCardPalette(theme);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [editingSubtaskId, setEditingSubtaskId] = useState(null);
   const [editSubtaskTitle, setEditSubtaskTitle] = useState('');
@@ -121,7 +124,7 @@ const TaskItemImpl = ({
             <Icon
               name={done ? "checkbox-marked" : "checkbox-blank-circle-outline"}
               size={22}
-              color={done ? theme.colors.accentSuccess : theme.colors.textTertiary}
+              color={done ? theme.colors.accentSuccess : inv.muted}
             />
             {/* Small white connector: drops from under the checkbox circle and
                 angles over the card toward the time/date badge, overlapping it
@@ -145,7 +148,7 @@ const TaskItemImpl = ({
               <View style={styles.metaRow}>
                 {item.time && (
                   <View style={styles.timeBadge}>
-                    <Icon name="clock" size={12} color={theme.colors.background} />
+                    <Icon name="clock" size={12} color={inv.onText} />
                     <Text style={styles.timeText}>
                       {formatTime12h(item.time, { timeFormat })}
                     </Text>
@@ -216,7 +219,7 @@ const TaskItemImpl = ({
               <Icon
                 name={expanded ? "chevron-up" : "chevron-down"}
                 size={20}
-                color={theme.colors.textTertiary}
+                color={inv.muted}
               />
             </TouchableOpacity>
           </View>
@@ -241,7 +244,7 @@ const TaskItemImpl = ({
                 <Icon 
                   name={subtask.completed ? "checkbox-marked" : "checkbox-blank-outline"} 
                   size={18} 
-                  color={subtask.completed ? theme.colors.accentSuccess : theme.colors.textTertiary} 
+                  color={subtask.completed ? theme.colors.accentSuccess : inv.muted} 
                 />
               </TouchableOpacity>
               
@@ -254,13 +257,13 @@ const TaskItemImpl = ({
                       onChangeText={setEditSubtaskTitle}
                       onSubmitEditing={saveEditSubtask}
                       autoFocus
-                      placeholderTextColor={theme.colors.textPlaceholder}
+                      placeholderTextColor={inv.muted}
                     />
                     <TouchableOpacity onPressIn={() => impactHaptic('medium')} onPress={saveEditSubtask}>
                       <Icon name="check" size={18} color={theme.colors.accentSuccess} />
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => setShowSubtaskTimePicker(true)}>
-                      <Icon name="clock" size={18} color={editSubtaskTime ? theme.colors.accentPrimary : theme.colors.textTertiary} />
+                      <Icon name="clock" size={18} color={editSubtaskTime ? theme.colors.accentInfo : inv.muted} />
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => { setEditingSubtaskId(null); setEditSubtaskTitle(''); setEditSubtaskTime(''); }}>
                       <Icon name="close" size={18} color={theme.colors.accentError} />
@@ -268,7 +271,7 @@ const TaskItemImpl = ({
                   </View>
                   {editSubtaskTime && (
                     <View style={styles.editSubtaskTimeBadge}>
-                      <Icon name="clock" size={12} color={theme.colors.background} />
+                      <Icon name="clock" size={12} color={inv.onText} />
                       <Text style={styles.editSubtaskTimeText}>
                         {formatTime12h(editSubtaskTime, { timeFormat })}
                       </Text>
@@ -287,7 +290,7 @@ const TaskItemImpl = ({
                       </Text>
                       {subtask.time && (
                         <View style={styles.subtaskTimeBadge}>
-                          <Icon name="clock" size={8} color={theme.colors.accentPrimary} />
+                          <Icon name="clock" size={8} color={theme.colors.accentInfo} />
                           <Text style={styles.subtaskTimeText}>
                             {formatTime12h(subtask.time, { meridiem: false, timeFormat })}
                           </Text>
@@ -305,7 +308,7 @@ const TaskItemImpl = ({
                       style={styles.subtaskAction}
                       onPress={() => handleEditSubtask(subtask)}
                     >
-                      <Icon name="pencil" size={16} color={theme.colors.textTertiary} />
+                      <Icon name="pencil" size={16} color={inv.muted} />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.subtaskAction}
@@ -336,19 +339,19 @@ const TaskItemImpl = ({
             <TextInput
               style={styles.addSubtaskInput}
               placeholder="Add subtask..."
-              placeholderTextColor={theme.colors.textPlaceholder}
+              placeholderTextColor={inv.muted}
               value={newSubtaskTitle}
               onChangeText={setNewSubtaskTitle}
               onSubmitEditing={handleAddSubtask}
             />
             <TouchableOpacity style={styles.addSubtaskBtn} onPressIn={() => impactHaptic('medium')} onPress={handleAddSubtask}>
-              <Icon name="check" size={18} color={theme.colors.textPrimary} />
+              <Icon name="check" size={18} color={inv.text} />
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.cancelSubtaskBtn}
               onPress={() => setNewSubtaskTitle('')}
             >
-              <Icon name="close" size={18} color={theme.colors.textTertiary} />
+              <Icon name="close" size={18} color={inv.muted} />
             </TouchableOpacity>
           </View>
 
@@ -399,9 +402,11 @@ export const TaskItem = React.memo(TaskItemImpl, (prev, next) =>
   prev.scrollY === next.scrollY,
 );
 
-const createStyles = (theme) => StyleSheet.create({
+const createStyles = (theme) => {
+  const inv = invertedCardPalette(theme);
+  return StyleSheet.create({
   container: {
-    backgroundColor: theme.colors.surfaceElevated,
+    backgroundColor: inv.card,
     marginBottom: 2,
   },
   completed: {
@@ -431,7 +436,7 @@ const createStyles = (theme) => StyleSheet.create({
     left: 11,
     width: 29,
     height: 1.5,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: inv.text,
     borderRadius: 1,
     zIndex: 5,
     elevation: 5, // Android paint-order: keep it above the content column
@@ -441,7 +446,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   title: {
     fontSize: theme.typography.body,
-    color: theme.colors.textPrimary,
+    color: inv.text,
     fontWeight: '500',
   },
   metaRow: {
@@ -454,7 +459,7 @@ const createStyles = (theme) => StyleSheet.create({
   timeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.textPrimary,
+    backgroundColor: inv.text,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -462,7 +467,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   timeText: {
     fontSize: 13,
-    color: theme.colors.background,
+    color: inv.onText,
     fontWeight: '700',
   },
   recurringBadge: {
@@ -505,7 +510,7 @@ const createStyles = (theme) => StyleSheet.create({
   subtaskTimeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: `${theme.colors.accentPrimary}20`,
+    backgroundColor: `${theme.colors.accentInfo}20`,
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 3,
@@ -513,17 +518,17 @@ const createStyles = (theme) => StyleSheet.create({
   },
   subtaskTimeText: {
     fontSize: 9,
-    color: theme.colors.accentPrimary,
+    color: theme.colors.accentInfo,
     fontWeight: '600',
   },
   description: {
     fontSize: theme.typography.body,
-    color: theme.colors.textTertiary,
+    color: inv.muted,
     marginTop: 2,
   },
   completedText: {
     textDecorationLine: 'line-through',
-    color: theme.colors.textTertiary,
+    color: inv.muted,
   },
   rightSection: {
     flexDirection: 'row',
@@ -548,7 +553,7 @@ const createStyles = (theme) => StyleSheet.create({
   progressBar: {
     flex: 1,
     height: 3,
-    backgroundColor: theme.colors.surfaceHighlight,
+    backgroundColor: inv.track,
     borderRadius: 2,
     marginRight: theme.spacing.sm,
     maxWidth: 60,
@@ -556,12 +561,12 @@ const createStyles = (theme) => StyleSheet.create({
   },
   progressFill: {
     height: '100%',
-    backgroundColor: theme.colors.textSecondary,
+    backgroundColor: inv.sub,
     borderRadius: 2,
   },
   subtaskCount: {
     fontSize: theme.typography.body,
-    color: theme.colors.textTertiary,
+    color: inv.muted,
   },
 
   // Expanded section - subtasks indented more than parent task
@@ -569,7 +574,7 @@ const createStyles = (theme) => StyleSheet.create({
     paddingLeft: theme.spacing.xxl,
     paddingRight: theme.spacing.md,
     paddingBottom: theme.spacing.sm,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: inv.card,
   },
   subtaskRow: {
     flexDirection: 'row',
@@ -587,11 +592,11 @@ const createStyles = (theme) => StyleSheet.create({
   },
   subtaskText: {
     fontSize: theme.typography.body,
-    color: theme.colors.textSecondary,
+    color: inv.sub,
   },
   subtaskCompleted: {
     textDecorationLine: 'line-through',
-    color: theme.colors.textTertiary,
+    color: inv.muted,
   },
   completionTime: {
     fontSize: 10,
@@ -622,13 +627,13 @@ const createStyles = (theme) => StyleSheet.create({
     borderBottomColor: theme.colors.border,
     padding: 4,
     fontSize: theme.typography.body,
-    color: theme.colors.textPrimary,
+    color: inv.text,
     marginRight: 8,
   },
   editSubtaskTimeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: `${theme.colors.accentPrimary}20`,
+    backgroundColor: `${theme.colors.accentInfo}20`,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -638,7 +643,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   editSubtaskTimeText: {
     fontSize: 11,
-    color: theme.colors.accentPrimary,
+    color: theme.colors.accentInfo,
     fontWeight: '600',
   },
 
@@ -655,12 +660,12 @@ const createStyles = (theme) => StyleSheet.create({
     borderRadius: 6,
     padding: 8,
     fontSize: theme.typography.body,
-    color: theme.colors.inputText,
+    color: inv.text,
     marginRight: 8,
-    backgroundColor: theme.colors.inputBackground,
+    backgroundColor: inv.field,
   },
   addSubtaskBtn: {
-    backgroundColor: theme.colors.surfaceElevated,
+    backgroundColor: inv.field,
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -684,7 +689,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   completionText: {
     fontSize: theme.typography.body,
-    color: theme.colors.textTertiary,
+    color: inv.muted,
     marginLeft: 6,
     fontStyle: 'italic',
   },
@@ -708,3 +713,4 @@ const createStyles = (theme) => StyleSheet.create({
     fontStyle: 'italic',
   },
 });
+};

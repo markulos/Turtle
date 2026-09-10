@@ -22,6 +22,11 @@ repo skill (loaded before any UI work) and by review.
   `experimentalBlurMethod="dimezisBlurView"` for Android) under an `rgba(10,10,12,.5–.6)` tint so
   white text stays legible whatever is behind it.
 
+- TASK CARDS are inverted against the page: light mode = black card, white text; dark mode = white card,
+  black text (`screens/TasksScreen/utils/cardPalette.js`). Everything drawn inside the card (badges,
+  sub-lines, progress tracks, inline inputs) takes its colour from that palette, never from the theme's
+  page tokens.
+
 ## 2. Text never overflows its container
 
 - A `Text` inside a row gets `flexShrink: 1`. Single-line labels also get `numberOfLines={1}`;
@@ -57,8 +62,11 @@ repo skill (loaded before any UI work) and by review.
   scroll position (down closes, up expands), and a TAP on it flips between the two detents. Use
   `headerPanHandlers` + `toggle` from useSheetDetents; `PhotoViewer/ViewerSheet` has it built in, so
   reuse it for any dark sheet. The Done button keeps its own press (claim on move, never on start).
-- Dark sheets are BLACK: card rgba(0,0,0,.9) over a dark BlurView (the blur only softens the corners),
-  white text, pills invert to white / black text. Not a translucent grey.
+- Dark sheets are FROSTED: rgba(10,10,12,.55) over a dark BlurView so what is underneath shows through,
+  softened; white text, pills invert to white / black text.
+- The TAGS sheet, whenever it is open, sits above EVERY other overlay on the screen (selection bar,
+  filter sheet, headers, chrome): mount it LAST in the screen root with its own zIndex (ViewerSheet
+  carries 1000), never inside a page or bar that another overlay can outrank.
 - Keyboard-aware sheets: no KeyboardAvoidingView. The sheet listens to the keyboard, jumps to EXPANDED,
   lifts by the keyboard height on a native-driver transform and caps its height below the status bar; it
   drops back when the keyboard goes. Search / add fields go at the TOP of a sheet.

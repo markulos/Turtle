@@ -7,6 +7,7 @@ import { itemTypeOf, formatDueDate } from '../utils/taskHelpers';
 import { tapHaptic } from '../../../utils/haptics';
 import TaskCountdownBadge from './TaskCountdownBadge';
 import { HatchBackdrop } from './HatchBackdrop';
+import { invertedCardPalette } from '../utils/cardPalette';
 
 // ── Quick time helpers (self-contained so this row works in any list) ──────────
 // Format "HH:MM" honoring the user's 12/24h preference.
@@ -62,14 +63,16 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
   const c = theme.colors || {};
   const use24h = timeFormat === '24h';
 
-  // Resilient token reads — mobile themes don't all expose the same names.
-  const cText = c.text || c.textPrimary || '#11181C';
-  const cSub = c.textSecondary || c.textTertiary || '#8A8F98';
-  const cMuted = c.textTertiary || c.textPlaceholder || cSub;
-  const cCard = c.surfaceElevated || c.card || c.surface || '#16181D';
-  // Caller can override the card fill (the agenda uses a slightly lighter tone).
-  const cCardBg = cardColor || cCard;
-  const cBorder = c.border || 'rgba(127,127,127,0.25)';
+  // The card is INVERTED against the screen (black on light, white on dark —
+  // utils/cardPalette). `cardColor` is accepted for compatibility but the
+  // inverted fill wins: a tone override would put the card back into the page.
+  const inv = invertedCardPalette(theme);
+  const cText = inv.text;
+  const cSub = inv.sub;
+  const cMuted = inv.muted;
+  const cCardBg = inv.card;
+  const cBorder = inv.border;
+  void cardColor;
   // The connecting rail can be emphasised by the caller (the agenda draws it as
   // the strong black/white line); defaults to the faint border tint.
   const cRail = railColor || cBorder;
