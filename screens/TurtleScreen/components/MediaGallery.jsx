@@ -2135,13 +2135,20 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
             // it matches the server's ORDER BY and the scrubber's timeline:
             // 'original' = TAKEN date (originalDate, uploadDate fallback),
             // 'upload' = date ADDED to Turtle.
-            const dateOf = sortMode === 'upload'
-              ? (m) => new Date(m.uploadDate)
-              : (m) => new Date(m.originalDate || m.uploadDate);
+            // ONE numeric timestamp per item, computed once — the comparator used
+            // to build two Date objects per comparison (n log n allocations per
+            // page land; perf sweep 2026-09-10).
+            const tsOf = (m) => {
+              const raw = sortMode === 'upload' ? m.uploadDate : (m.originalDate || m.uploadDate);
+              const n = typeof raw === 'number' ? raw : Date.parse(raw);
+              return Number.isFinite(n) ? n : 0;
+            };
             // Match the server's direction too — an ascending page merged with
             // a hardcoded descending sort would scramble the timeline.
             const sign = filters.direction === 'asc' ? -1 : 1;
-            return Array.from(uniqueMap.values()).sort((a, b) => sign * (dateOf(b) - dateOf(a)));
+            const keyed = Array.from(uniqueMap.values(), (m) => [tsOf(m), m]);
+            keyed.sort((a, b) => sign * (b[0] - a[0]));
+            return keyed.map((k) => k[1]);
           });
           setUploadOffset(currentOffset + LIMIT);
         }
