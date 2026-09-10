@@ -17,6 +17,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../context/ThemeContext';
+import { insetCardPalette } from '../utils/cardPalette';
 import { getTaskTimer, timerLabel } from '../utils/taskHelpers';
 
 // ── Shared 1s ticker ──────────────────────────────────────────────────
@@ -71,14 +72,22 @@ const TaskCountdownBadge = ({ task }) => {
   const timer = useTaskTimer(task);
   if (!timer) return null;
 
+  // The badge sits on an INSET card, so it draws from that palette: a
+  // pending badge is the card's icon tile (a step darker) with full-contrast
+  // text; the timed states keep their accent but on a light wash of it.
+  // (The old `${color}1A` alpha suffix was appended to an rgba() token —
+  // an invalid colour, hence the flat grey with grey text.)
+  const pal = insetCardPalette(theme);
+  const pending = timer.state === 'pending';
   const color =
     timer.state === 'started'
       ? theme.colors.accentError
       : timer.state === 'today'
         ? theme.colors.accentWarning
-        : timer.state === 'pending'
-          ? theme.colors.textTertiary
+        : pending
+          ? pal.text
           : theme.colors.accentInfo;
+  const fill = pending ? pal.tile : `${color}22`;
 
   const icon =
     timer.state === 'pending'
@@ -90,8 +99,8 @@ const TaskCountdownBadge = ({ task }) => {
   const text = timer.state === 'pending' ? `pending ${timer.label}` : timer.label;
 
   return (
-    <View style={[styles.badge, { backgroundColor: `${color}1A` }]}>
-      <Icon name={icon} size={11} color={color} />
+    <View style={[styles.badge, { backgroundColor: fill }]}>
+      <Icon name={icon} size={11} color={pending ? pal.sub : color} />
       <Text style={[styles.text, { color }]} numberOfLines={1}>
         {text}
       </Text>
