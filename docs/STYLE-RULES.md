@@ -70,9 +70,17 @@ repo skill (loaded before any UI work) and by review.
 - The TAGS sheet, whenever it is open, sits above EVERY other overlay on the screen (selection bar,
   filter sheet, headers, chrome): mount it LAST in the screen root with its own zIndex (ViewerSheet
   carries 1000), never inside a page or bar that another overlay can outrank.
-- Keyboard-aware sheets: no KeyboardAvoidingView. The sheet listens to the keyboard, jumps to EXPANDED,
-  lifts by the keyboard height on a native-driver transform and caps its height below the status bar; it
-  drops back when the keyboard goes. Search / add fields go at the TOP of a sheet.
+- Keyboard-aware sheets: no KeyboardAvoidingView. The sheet listens to the keyboard and — ONLY IF the
+  keyboard would COVER the field it opened for (measure the field, compare with the keyboard's top) —
+  jumps to EXPANDED, lifts by the keyboard height on a native-driver transform and caps its height below
+  the status bar. If the field is already clear of the keyboard, NOTHING on screen changes size or place;
+  the body just gains bottom padding so what sits under the keyboard stays reachable. Drops back when
+  the keyboard goes. Search / add fields go at the TOP of a sheet (`PhotoViewer/ViewerSheet` does all this).
+- Keyboard + a scrolling list (the chat): the list keeps scrolling with the keyboard up
+  (`keyboardDismissMode="none"`); the keyboard closes on a SWIFT pull DOWN (≥ 48 pt at ≥ 1.2 pt/ms) or a
+  tap on the background — never on an ordinary scroll, never proportionally ("interactive").
+- Assistant text renders MARKDOWN (`components/MarkdownText` over `utils/markdownLite`): headings, lists,
+  code, bold / italic / strike, links, quotes. Never show raw markers in a bubble.
 - Every sheet/page `ScrollView` sets `scrollIndicatorInsets={{ right: 1 }}` and `indicatorStyle`,
   or iOS parks the indicator mid-page.
 
