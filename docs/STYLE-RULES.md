@@ -37,7 +37,10 @@ repo skill (loaded before any UI work) and by review.
   tertiary); the card is a soft wash of the board colour (18 % on the light page, 26 % on the dark, radius 18,
   no border, no shadow) with the title (16 / 600), the board name (13), a completion ring and the range
   bottom-right — nothing else; the inspector holds the details. Untimed rows keep the shape with "any time"
-  in the time column; empty time between rows is a dashed rule with its duration. The panel header is ONE
+  in the time column. The compact schedule is a CONDENSED HOUR TIMELINE (`buildCondensedRows`): every hour
+  from the first task to the last task's end has a row — the card on the hour a task starts (it stands for the
+  hours it covers), a dashed rule with the hour label for a free hour, one "Nh free" row for a stretch longer
+  than three free hours. The panel header is ONE
   line: "Task Schedule" (26 / 600) with the date beside it (12 / 300, 50 % opacity) — no hint text, no count.
   The panel's SURFACE is the desktop pomodoro stat tile: base #ECEEF2 (light) / #161719 (dark), 1 px border
   rgba(0,0,0,.08) / .45, a top-to-bottom gradient overlay (rgba(0,0,0,.04)→rgba(255,255,255,.6) light;
