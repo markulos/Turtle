@@ -46,6 +46,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { MusicPlayerProvider } from './context/MusicPlayerContext';
 import { ClaudeQueueProvider } from './context/ClaudeQueueContext';
 import { CommandBusProvider } from './context/CommandBusContext';
+import { OpenTargetProvider } from './context/OpenTargetContext';
 import { CelebrationProvider } from './context/CelebrationContext';
 import { DownloadsProvider } from './context/DownloadsContext';
 import DownloadsPill from './components/DownloadsPill';
@@ -470,6 +471,7 @@ export default function App() {
                   <VaultProvider>
                     <ClaudeQueueProvider>
                       <CommandBusProvider>
+                      <OpenTargetProvider>
                        {/* Confetti + "+N pts" flourish on task / pomodoro
                            completion, mirroring the desktop HUD. Wraps the app
                            so the overlay floats above every screen. */}
@@ -513,6 +515,7 @@ export default function App() {
                             into a to-do carrying a ready-to-send fix prompt. */}
                         <GestureProbeOverlay />
                        </CelebrationProvider>
+                      </OpenTargetProvider>
                       </CommandBusProvider>
                     </ClaudeQueueProvider>
                   </VaultProvider>

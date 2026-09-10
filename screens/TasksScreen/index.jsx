@@ -130,6 +130,7 @@ import FriendCard from '../TurtleScreen/components/FriendCard';
 import EdgeSwipePage from '../TurtleScreen/components/EdgeSwipePage';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useCommandBus } from '../../context/CommandBusContext';
+import { useOpenTarget } from '../../context/OpenTargetContext';
 import { useCelebration } from '../../context/CelebrationContext';
 
 // Must match MAX_HEIGHT in ProjectDropdown.jsx — the page below the picker
@@ -1668,6 +1669,18 @@ export default function TasksScreen() {
     setSelectedTask(task);
     setShowDetail(true);
   };
+
+  // A task handed over from elsewhere (global search): open its detail the
+  // way a tap here would. Prefer the loaded row (subtasks, meta); fall back
+  // to the handed hit if this list has not loaded it.
+  const { pending: pendingTarget, clear: clearTarget } = useOpenTarget();
+  useEffect(() => {
+    if (!pendingTarget || pendingTarget.kind !== 'task') return;
+    const found = (tasks || []).find((t) => t && t.id === pendingTarget.id);
+    clearTarget();
+    openDetail(found || pendingTarget.item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTarget, tasks]);
 
   const closeTaskForm = () => {
     setShowTaskForm(false);

@@ -141,7 +141,7 @@ const timeAgo = (ts) => {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-export default function ConversationsOverlay({ visible, onClose, onOpenClaude }) {
+export default function ConversationsOverlay({ visible, onClose, onOpenClaude, initialBoard = null }) {
   const { theme } = useTheme();
   const c = theme.colors;
   const insets = useSafeAreaInsets();
@@ -165,6 +165,11 @@ export default function ConversationsOverlay({ visible, onClose, onOpenClaude })
   const [loadFailed, setLoadFailed] = useState(false);
   const [query, setQuery] = useState('');
   const [openBoard, setOpenBoard] = useState(null);
+  // Opened with a board in hand (a global-search hit) → straight into its
+  // thread; the inbox is still underneath for the swipe back.
+  useEffect(() => {
+    if (visible && initialBoard) setOpenBoard(initialBoard);
+  }, [visible, initialBoard]);
 
   // Instagram-style loading: the names list is INSTANT, everything else
   // hydrates in place. Three tiers —
