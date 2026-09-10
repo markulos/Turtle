@@ -97,9 +97,9 @@ for assets newer than the last upload watermark and queues them. Needs the Photo
 "All Photos" level (already requested) and the user's opt-in switch.
 - Limits: iOS never runs a third-party app on "new photo taken"; the scan happens only in the Phase 2
   windows. This is the same constraint every non-Apple photo app lives with.
-- Built:  — Settings switch ("Photos › Auto-upload new photos", off by default; turning it on
+- Built: `services/cameraRollAutoUpload.js` — Settings switch ("Photos › Auto-upload new photos", off by default; turning it on
   asks for the photo permission and sets the watermark to NOW so only photos taken from then on upload by themselves),
-  AsyncStorage  { enabled, watermark, lastScanAt, lastCount }, a scan = getAssetsAsync(createdAfter:
+  AsyncStorage `turtle:autoUpload:v1` { enabled, watermark, lastScanAt, lastCount }, a scan = getAssetsAsync(createdAfter:
   watermark) → VaultUploadContext.enqueue in the device picker's shape (tags Phone Uploads), watermark advances only when
   the uploader accepted the batch (a busy uploader → the next trigger retries). Triggers: launch / foreground / a
   media-library change while open (3 s debounce) — wired in VaultUploadContext; and FIRST inside every background
