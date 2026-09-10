@@ -2716,9 +2716,17 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   // touches all of it: the open photo, the prefix, the sparse pages, the
   // album list and the album counts.
 
+  // Cached per display-array identity: a heart tap used to walk the whole
+  // virtual array (up to ~47k slots) twice — once here, once in
+  // applyTagsLocally — for one photo (perf sweep 2026-09-10).
+  const displayIndexRef = useRef({ arr: null, byId: null });
   const displayById = useCallback(() => {
+    const arr = uploadItemsForDragRef.current || [];
+    const cached = displayIndexRef.current;
+    if (cached.arr === arr && cached.byId) return cached.byId;
     const byId = new Map();
-    for (const it of uploadItemsForDragRef.current || []) if (it && it.id && !it.isSkeleton) byId.set(it.id, it);
+    for (const it of arr) if (it && it.id && !it.isSkeleton) byId.set(it.id, it);
+    displayIndexRef.current = { arr, byId };
     return byId;
   }, []);
 

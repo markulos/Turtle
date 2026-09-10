@@ -1778,91 +1778,13 @@ export default function TurtleScreen() {
   // Stable chat renderItem — an inline arrow gave the FlashList a NEW
   // renderItem identity every render (every keystroke), defeating the
   // ViewHolder's built-in memo and re-rendering every visible message row.
-  const renderMessage = useCallback(({ item: message }) => {
-    let textToRender = message.text;
-    let extractedImage = null;
-    const match = message.text?.match(/\[IMG:(.+?)\]/);
-    if (match) {
-      extractedImage = match[1];
-      textToRender = message.text.replace(match[0], '').trim();
-    }
-
-    if (message.type === 'stats' && message.stats) {
-      return (
-        <View style={styles.timerBubble}>
-          <PomodoroStatsCard stats={message.stats} theme={theme} />
-        </View>
-      );
-    }
-
-    // Robust URL generation that handles trailing slashes and double '/api'.
-    const buildImageUrl = (filename) => {
-      const base = getBaseUrl().replace(/\/+$/, '').replace(/\/api$/, '');
-      return `${base}/api/media/raw/${filename}`;
-    };
-
-    return (
-      <View style={[
-        styles.messageBubble,
-        message.isWelcome ? styles.welcomeBubble :
-        message.sender === 'user' ? styles.userBubble :
-        message.sender === 'error' ? styles.errorBubble : styles.serverBubble,
-        // Telegram Style: If there's an image, remove padding so it sits flush to the edges
-        extractedImage && { paddingVertical: 4, paddingHorizontal: 4 }
-      ]}>
-        {extractedImage && (
-          <Image
-            source={{ uri: buildImageUrl(extractedImage) }}
-            style={{
-              width: 240,
-              aspectRatio: 1,
-              borderRadius: 10, // Inner radius slightly tighter than outer bubble
-              marginBottom: textToRender ? 6 : 0,
-              backgroundColor: 'rgba(0,0,0,0.1)'
-            }}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-          />
-        )}
-        {textToRender ? (
-          message.sender === 'user' ? (
-            <Text style={[
-              styles.messageText,
-              styles.userText,
-              // Re-inject padding for text if it was removed by the image container
-              extractedImage && { paddingHorizontal: 8, paddingBottom: 4 }
-            ]}>
-              {textToRender}
-            </Text>
-          ) : (
-            // Turtle's replies carry Markdown (headings, lists, code, bold…);
-            // render it instead of showing the raw markers.
-            <View style={extractedImage ? { paddingHorizontal: 8, paddingBottom: 4 } : null}>
-              <MarkdownText
-                text={textToRender}
-                theme={theme}
-                style={[styles.messageText, message.isWelcome ? styles.welcomeText : styles.serverText]}
-              />
-            </View>
-          )
-        ) : null}
-        {!message.isWelcome && (
-          <Text style={[
-            styles.timestamp,
-            // Adjust timestamp position if inside a photo bubble
-            extractedImage && { paddingHorizontal: 8, paddingBottom: 2 }
-          ]}>
-            {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-        )}
-        {message.isTelegram && (
-          <View style={{ backgroundColor: 'rgba(0, 136, 204, 0.8)', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, marginTop: 6, alignSelf: 'flex-end', ...(extractedImage && { marginRight: 6, marginBottom: 4 }) }}>
-            <Text style={{ fontSize: 9, color: '#fff', fontWeight: 'bold' }}>TG</Text>
-          </View>
-        )}
-      </View>
-    );
-  }, [styles, theme, getBaseUrl]);
+  // One bubble = one memoized component (ChatBubble, module scope below).
+  // Rows re-render only when their own message / theme changes — the regex,
+  // the Date formatting and the Markdown parse used to run for every visible
+  // row on every transcript render (perf sweep 2026-09-10).
+  const renderMessage = useCallback(({ item: message }) => (
+    <ChatBubble message={message} styles={styles} theme={theme} getBaseUrl={getBaseUrl} />
+  ), [styles, theme, getBaseUrl]);
 
   // Show Media Gallery overlay when open
   if (isGalleryOpen) {
@@ -4148,3 +4070,93 @@ const createStatsStyles = (theme) =>
     },
     emptyHint: { fontSize: 12, color: theme.colors.textMuted },
   });
+
+// ── ChatBubble ─────────────────────────────────────────────────────────────
+// The transcript row. Memoized on its props: message objects are immutable
+// once in the list, styles/theme change only with the theme, getBaseUrl with
+// the server — so a new message re-renders ONE row, not the window.
+const ChatBubble = React.memo(function ChatBubble({ message, styles, theme, getBaseUrl }) {
+    let textToRender = message.text;
+    let extractedImage = null;
+    const match = message.text?.match(/\[IMG:(.+?)\]/);
+    if (match) {
+      extractedImage = match[1];
+      textToRender = message.text.replace(match[0], '').trim();
+    }
+
+    if (message.type === 'stats' && message.stats) {
+      return (
+        <View style={styles.timerBubble}>
+          <PomodoroStatsCard stats={message.stats} theme={theme} />
+        </View>
+      );
+    }
+
+    // Robust URL generation that handles trailing slashes and double '/api'.
+    const buildImageUrl = (filename) => {
+      const base = getBaseUrl().replace(/\/+$/, '').replace(/\/api$/, '');
+      return `${base}/api/media/raw/${filename}`;
+    };
+
+    return (
+      <View style={[
+        styles.messageBubble,
+        message.isWelcome ? styles.welcomeBubble :
+        message.sender === 'user' ? styles.userBubble :
+        message.sender === 'error' ? styles.errorBubble : styles.serverBubble,
+        // Telegram Style: If there's an image, remove padding so it sits flush to the edges
+        extractedImage && { paddingVertical: 4, paddingHorizontal: 4 }
+      ]}>
+        {extractedImage && (
+          <Image
+            source={{ uri: buildImageUrl(extractedImage) }}
+            style={{
+              width: 240,
+              aspectRatio: 1,
+              borderRadius: 10, // Inner radius slightly tighter than outer bubble
+              marginBottom: textToRender ? 6 : 0,
+              backgroundColor: 'rgba(0,0,0,0.1)'
+            }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+        )}
+        {textToRender ? (
+          message.sender === 'user' ? (
+            <Text style={[
+              styles.messageText,
+              styles.userText,
+              // Re-inject padding for text if it was removed by the image container
+              extractedImage && { paddingHorizontal: 8, paddingBottom: 4 }
+            ]}>
+              {textToRender}
+            </Text>
+          ) : (
+            // Turtle's replies carry Markdown (headings, lists, code, bold…);
+            // render it instead of showing the raw markers.
+            <View style={extractedImage ? { paddingHorizontal: 8, paddingBottom: 4 } : null}>
+              <MarkdownText
+                text={textToRender}
+                theme={theme}
+                style={[styles.messageText, message.isWelcome ? styles.welcomeText : styles.serverText]}
+              />
+            </View>
+          )
+        ) : null}
+        {!message.isWelcome && (
+          <Text style={[
+            styles.timestamp,
+            // Adjust timestamp position if inside a photo bubble
+            extractedImage && { paddingHorizontal: 8, paddingBottom: 2 }
+          ]}>
+            {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </Text>
+        )}
+        {message.isTelegram && (
+          <View style={{ backgroundColor: 'rgba(0, 136, 204, 0.8)', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, marginTop: 6, alignSelf: 'flex-end', ...(extractedImage && { marginRight: 6, marginBottom: 4 }) }}>
+            <Text style={{ fontSize: 9, color: '#fff', fontWeight: 'bold' }}>TG</Text>
+          </View>
+        )}
+      </View>
+    );
+});

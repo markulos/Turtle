@@ -91,6 +91,7 @@ const BACKGROUND_FANOUT = 8;
 // filed as a feedback note (services/uploadDiagnostics).
 const RECONCILE_MIN_INFLIGHT_MS = 20 * 1000;
 const RECONCILE_STALE_MS = 4 * 60 * 1000;
+const PERSIST_COALESCE_MS = 1000;
 const RECONCILE_TICK_MS = 45 * 1000;
 const MAX_ITEM_RETRIES = 2;
 
@@ -230,8 +231,13 @@ export function VaultUploadProvider({ children }) {
   }, [publish]);
 
   // Checkpoint the batch (drop transient per-item meta — it's re-resolved on
-  // resume). Called after every item, never per progress tick.
+  // resume). Status transitions checkpoint at once; the per-item hot path
+  // goes through persistSoon (below) — a 450-item batch used to serialize
+  // the whole array ~900 times, twice per item, on the JS thread while the
+  // user scrolled (perf sweep 2026-09-10).
+  const persistTimerRef = useRef(null);
   const persist = useCallback(async () => {
+    if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
     const batch = batchRef.current;
     try {
       if (!batch) return;
@@ -244,6 +250,17 @@ export function VaultUploadProvider({ children }) {
       await AsyncStorage.setItem(queueKeyFor(batch.ownerIdentity), JSON.stringify(lean));
     } catch (e) { /* best-effort — worst case a restart re-uploads one item */ }
   }, []);
+
+  /**
+   * The per-item checkpoint. Foreground: trailing, at most one write per
+   * PERSIST_COALESCE_MS. Background: immediate — the OS may suspend us at any
+   * moment and the resume contract needs the latest picture on disk.
+   */
+  const persistSoon = useCallback(() => {
+    if (!appActiveRef.current) { persist(); return; }
+    if (persistTimerRef.current) return;
+    persistTimerRef.current = setTimeout(() => { persistTimerRef.current = null; persist(); }, PERSIST_COALESCE_MS);
+  }, [persist]);
 
   const clearBatch = useCallback(() => {
     const ownerIdentity = batchRef.current?.ownerIdentity || authRef.current.authIdentity;
@@ -560,7 +577,7 @@ export function VaultUploadProvider({ children }) {
           currentPctRef.current = sum;
           if (isCurrentBatch()) {
             publish();
-            await persist();
+            persistSoon();
           }
         }
       };
@@ -581,7 +598,7 @@ export function VaultUploadProvider({ children }) {
           active.set(item.key, run);
           started += 1;
         }
-        if (started > 0) { publish(); await persist(); }
+        if (started > 0) { publish(); persistSoon(); }
         if (active.size === 0) break;
         await Promise.race([...active.values(), wake.promise]);
       }
@@ -829,6 +846,7 @@ export function VaultUploadProvider({ children }) {
       // of runtime — the background session carries those files while we sleep.
       if (s !== 'active') {
         wakePoolRef.current?.();
+        persist(); // flush the coalesced checkpoint before we may be suspended
         const b = batchRef.current;
         if (b && b.status !== 'done' && b.items.some((it) => !TERMINAL.has(it.status))) scheduleUploadDrain();
       }
