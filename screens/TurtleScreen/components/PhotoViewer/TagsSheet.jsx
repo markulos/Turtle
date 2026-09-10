@@ -12,6 +12,11 @@
  * The chips render `parseTags(item)` from props, so the optimistic update
  * flows back through the items list rather than living in a second copy here.
  * `Favourites` shows but cannot be removed from this sheet: the heart owns it.
+ *
+ * Two callers: the viewer (one photo: `item` + `onCommitTags(id, next)`) and
+ * the grid's selection bar (many photos: `tags` = the tags they all share +
+ * `onChange(next)`; the gallery turns the difference into add/remove for the
+ * whole selection). Same sheet, same chips, same immediate commits.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -43,15 +48,28 @@ export function matchTags(candidates, query) {
     .map(({ name }) => name);
 }
 
-export default function TagsSheet({ item, suggestions = [], onCommitTags, onClose, theme, dark = true }) {
-  const tags = useMemo(() => parseTags(item), [item]);
+export default function TagsSheet({
+  item,
+  tags: tagsProp,
+  suggestions = [],
+  onCommitTags,
+  onChange,
+  onClose,
+  theme,
+  dark = true,
+  title = 'Tags',
+  subtitle,
+  bottomInset = 0,
+}) {
+  const tags = useMemo(() => (Array.isArray(tagsProp) ? tagsProp : parseTags(item)), [tagsProp, item]);
   const [draft, setDraft] = useState('');
   const colors = sheetColors(theme, dark);
 
   const commit = useCallback((next) => {
+    if (Array.isArray(tagsProp)) { onChange?.(next); return; }
     if (!item?.id) return;
     onCommitTags?.(item.id, next);
-  }, [item?.id, onCommitTags]);
+  }, [tagsProp, onChange, item?.id, onCommitTags]);
 
   const add = useCallback((raw) => {
     const next = mergeTags(tags, Array.isArray(raw) ? raw : [raw]);
@@ -144,7 +162,7 @@ export default function TagsSheet({ item, suggestions = [], onCommitTags, onClos
   );
 
   return (
-    <ViewerSheet title="Tags" onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} testID="tags-sheet">
+    <ViewerSheet title={title} subtitle={subtitle} bottomInset={bottomInset} onClose={onClose} theme={theme} dark={dark} keyboard topBar={composer} testID="tags-sheet">
       {query.length > 0 ? (
         <>
           {!exactExists && (

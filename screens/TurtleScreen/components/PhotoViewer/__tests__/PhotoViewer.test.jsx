@@ -63,7 +63,7 @@ jest.mock('../../../../../context/MusicPlayerContext', () => ({
 
 import PhotoViewer from '../PhotoViewer';
 import { formatClock } from '../ViewerChrome';
-import { matchTags, mergeTags } from '../TagsSheet';
+import TagsSheet, { matchTags, mergeTags } from '../TagsSheet';
 
 describe('viewer helpers', () => {
   test('formatClock', () => {
@@ -206,5 +206,33 @@ describe('PhotoViewer', () => {
     const { view, props } = await renderViewer();
     await view.rerender(<PhotoViewer {...props} items={[items[0], items[2]]} />);
     expect(props.onClosed).toHaveBeenCalled();
+  });
+});
+
+describe('TagsSheet over a selection (list mode)', () => {
+  test('chips edit a plain tag list through onChange; the header tap flips the detent', async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    await render(
+      <TagsSheet
+        tags={['Trip']}
+        suggestions={['Trip', 'Beach', 'All']}
+        onChange={onChange}
+        onClose={jest.fn()}
+        theme={theme}
+        subtitle="3 photos selected"
+      />,
+    );
+    expect(screen.getByText('3 photos selected')).toBeTruthy();
+    await user.press(screen.getByTestId('tag-suggest-Beach'));
+    expect(onChange).toHaveBeenCalledWith(['Trip', 'Beach']);
+    await user.press(screen.getByTestId('tag-chip-Trip'));
+    expect(onChange).toHaveBeenLastCalledWith([]);
+
+    expect(screen.getByTestId('tags-sheet-grab').props.accessibilityLabel).toBe('Expand sheet');
+    await user.press(screen.getByTestId('tags-sheet-grab'));
+    expect(screen.getByTestId('tags-sheet-grab').props.accessibilityLabel).toBe('Collapse sheet');
+    await user.press(screen.getByTestId('tags-sheet-grab'));
+    expect(screen.getByTestId('tags-sheet-grab').props.accessibilityLabel).toBe('Expand sheet');
   });
 });

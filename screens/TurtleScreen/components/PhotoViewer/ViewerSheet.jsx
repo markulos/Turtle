@@ -54,7 +54,9 @@ const CORNER_RADIUS = 24;
  * with black text — so a chip is never "a slightly different dark on dark".
  */
 export const DARK_SHEET = {
-  card: 'rgba(10, 10, 12, 0.55)',
+  // Black. The blur behind it only softens the edges of what shows through
+  // at the corners; the card itself reads as a solid black surface.
+  card: 'rgba(0, 0, 0, 0.9)',
   textPrimary: '#ffffff',
   textSecondary: 'rgba(255,255,255,0.7)',
   textMuted: 'rgba(255,255,255,0.45)',
@@ -96,6 +98,10 @@ export function sheetColors(theme, dark) {
 export default function ViewerSheet({
   onClose,
   title,
+  /** A second, quieter line under the title (e.g. "12 photos"). */
+  subtitle,
+  /** Extra clearance under the content (a floating dock outside this tree). */
+  bottomInset = 0,
   doneLabel = 'Done',
   collapsedRatio = COLLAPSED_RATIO,
   expandedRatio = EXPANDED_RATIO,
@@ -118,7 +124,7 @@ export default function ViewerSheet({
   const [expanded, setExpanded] = useState(false);
   const onDetent = useCallback((d) => setExpanded(d === 'expanded'), []);
 
-  const { offsetY, panHandlers, sheetStyle, scrollProps, expand, close: closeByDrag } = useSheetDetents({
+  const { offsetY, panHandlers, headerPanHandlers, sheetStyle, scrollProps, expand, toggle, close: closeByDrag } = useSheetDetents({
     collapsedOffset,
     onClose,
     onDetent,
@@ -209,17 +215,33 @@ export default function ViewerSheet({
           )}
           {dark && <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.card }]} pointerEvents="none" />}
           <View style={[styles.cardContent, fullScreen && { paddingTop: insets.top }]}>
-            <View style={[styles.handle, { backgroundColor: colors.handle }]} />
-            <View style={styles.header}>
-              <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>{title}</Text>
-              <Pressable onPress={close} hitSlop={12} accessibilityRole="button" accessibilityLabel={doneLabel} testID={testID ? `${testID}-done` : undefined}>
-                <Text style={[styles.done, { color: colors.primary }]}>{doneLabel}</Text>
+            {/* The header is a grab bar in its own right: drag it up or down
+                from ANY scroll position, or tap it to jump between the two
+                detents. The Done button keeps its own press. */}
+            <View {...headerPanHandlers} testID={testID ? `${testID}-header` : undefined}>
+              <Pressable
+                onPress={toggle}
+                accessibilityRole="button"
+                accessibilityLabel={expanded ? 'Collapse sheet' : 'Expand sheet'}
+                style={styles.grab}
+                testID={testID ? `${testID}-grab` : undefined}
+              >
+                <View style={[styles.handle, { backgroundColor: colors.handle }]} />
+                <View style={styles.header}>
+                  <View style={styles.titles}>
+                    <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>{title}</Text>
+                    {!!subtitle && <Text style={[styles.subtitle, { color: colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text>}
+                  </View>
+                  <Pressable onPress={close} hitSlop={12} accessibilityRole="button" accessibilityLabel={doneLabel} style={styles.doneHit} testID={testID ? `${testID}-done` : undefined}>
+                    <Text style={[styles.done, { color: colors.primary }]}>{doneLabel}</Text>
+                  </Pressable>
+                </View>
               </Pressable>
             </View>
             {topBar}
             <ScrollView
               style={styles.body}
-              contentContainerStyle={[styles.bodyContent, { paddingBottom: 24 + insets.bottom }]}
+              contentContainerStyle={[styles.bodyContent, { paddingBottom: 24 + Math.max(insets.bottom, bottomInset) }]}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator
@@ -262,6 +284,10 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
   },
+  grab: {
+    // The whole block is the tap/drag target — comfortably over 44pt.
+    paddingBottom: 2,
+  },
   handle: {
     width: 40,
     height: 5,
@@ -275,11 +301,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 8,
+    minHeight: 44,
+  },
+  titles: {
+    flex: 1,
+    flexShrink: 1,
+    paddingRight: 12,
   },
   title: {
     fontSize: 18,
     fontWeight: '700',
     flexShrink: 1,
+  },
+  subtitle: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  doneHit: {
+    minHeight: 44,
+    justifyContent: 'center',
   },
   done: {
     fontSize: 16,
