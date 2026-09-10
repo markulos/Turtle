@@ -71,7 +71,7 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
   const cSub = inv.sub;
   const cMuted = inv.muted;
   const cCardBg = inv.card;
-  const cBorder = inv.border;
+  const cBorder = inv.edge;
   void cardColor;
   // The connecting rail can be emphasised by the caller (the agenda draws it as
   // the strong black/white line); defaults to the faint border tint.
@@ -86,7 +86,10 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
   const cCheckMark = isDark ? '#000000' : '#FFFFFF';
   const cCheckOutline = cSub;
   const cCheckEmptyBg = isDark ? '#000000' : '#FFFFFF';
-  const cCheckEmptyBorder = isDark ? '#FFFFFF' : cCheckOutline;
+  // The empty ring is full-contrast against the page it sits on — black on
+  // light, white on dark — never a grey.
+  const cCheckEmptyBorder = isDark ? '#FFFFFF' : '#000000';
+  void cCheckOutline;
   // Opaque backing behind the toggle disc (black on dark, white on light) so the
   // connector line tucks cleanly UNDER the checkmark instead of showing through.
   const cCheckBackdrop = isDark ? '#000000' : '#FFFFFF';
@@ -202,7 +205,7 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: completed ? cCheckFill : cCheckEmptyBg,
-              borderWidth: completed ? 0 : 1.5,
+              borderWidth: completed ? 0 : 2,
               borderColor: cCheckEmptyBorder,
             }}
           >
@@ -259,9 +262,13 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
           paddingVertical: 9,
           paddingHorizontal: 12,
           opacity: completed ? 0.65 : 1,
+          // Depth: the card is a raised object on the page (shadow + lit edge),
+          // not a flat block. No overflow:hidden here — on iOS that masks the
+          // shadow; the hatch backdrop clips itself to the radius.
+          ...inv.shadow,
           // Uniform mode: pixel-exact card height so the row's total height is
           // a constant the agenda's placeholder geometry can rely on.
-          ...(uniform ? { height: UNIFORM_CARD_H, overflow: 'hidden', justifyContent: 'center' } : {}),
+          ...(uniform ? { height: UNIFORM_CARD_H, justifyContent: 'center' } : {}),
           // With a trailing accessory the card lays out as [text | button].
           ...(trailing ? { flexDirection: 'row', alignItems: 'center' } : {}),
         }}

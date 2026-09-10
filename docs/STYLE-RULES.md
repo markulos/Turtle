@@ -25,7 +25,10 @@ repo skill (loaded before any UI work) and by review.
 - TASK CARDS are inverted against the page: light mode = black card, white text; dark mode = white card,
   black text (`screens/TasksScreen/utils/cardPalette.js`). Everything drawn inside the card (badges,
   sub-lines, progress tracks, inline inputs) takes its colour from that palette, never from the theme's
-  page tokens.
+  page tokens. Cards have DEPTH — the palette's `shadow` (iOS shadow + Android elevation) and `edge`
+  (a lit hairline rim) — and never `overflow: 'hidden'` on the shadowed view (iOS masks the shadow).
+  Completion rings are full-contrast against whatever they sit on (black on light, white on dark; the
+  card's text colour inside a card), 2 pt, never grey.
 
 ## 2. Text never overflows its container
 
