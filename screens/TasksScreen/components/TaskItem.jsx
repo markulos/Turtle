@@ -124,7 +124,8 @@ const TaskItemImpl = ({
             <Icon
               name={done ? "checkbox-marked" : "checkbox-blank-circle-outline"}
               size={22}
-              color={done ? theme.colors.accentSuccess : inv.muted}
+              // The empty ring at full contrast against the card, never grey.
+              color={done ? theme.colors.accentSuccess : inv.text}
             />
             {/* Small white connector: drops from under the checkbox circle and
                 angles over the card toward the time/date badge, overlapping it
@@ -244,7 +245,7 @@ const TaskItemImpl = ({
                 <Icon 
                   name={subtask.completed ? "checkbox-marked" : "checkbox-blank-outline"} 
                   size={18} 
-                  color={subtask.completed ? theme.colors.accentSuccess : inv.muted} 
+                  color={subtask.completed ? theme.colors.accentSuccess : inv.text} 
                 />
               </TouchableOpacity>
               
@@ -407,7 +408,15 @@ const createStyles = (theme) => {
   return StyleSheet.create({
   container: {
     backgroundColor: inv.card,
-    marginBottom: 2,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: inv.edge,
+    // Depth: shadow + elevation + the lit edge above. No overflow:hidden
+    // (iOS would mask the shadow); the expanded section keeps the card colour
+    // so nothing needs clipping.
+    ...inv.shadow,
   },
   completed: {
     opacity: 0.6,
