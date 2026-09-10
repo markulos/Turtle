@@ -100,16 +100,24 @@ repo skill (loaded before any UI work) and by review.
 
 ## 4b. Screen headers
 
-- A screen header is ONE row of keys: the view toggle, the status keys (To do · Done · All), the filter
-  key, the Boards key — no dropdowns, no stats chips, no second row of pills, no header + (the day panel
-  and the list's inline field add tasks). The Boards key is a hairline pill that reads the selected board
-  (dot + name, or "Boards") and lights (text colour as fill) while a board is selected or the rail is open.
-  What the list is scoped to lives in an inset-card RAIL that the key toggles under the row
-  (`TasksScreen/components/BoardRail`), HIDDEN by default and closing on a pick: "All" first, one card
-  per board carrying its own progress (done / total, a hairline track, the overdue count), a dashed + key
-  last. The selected card inverts like a lit key; tap scopes, long-press opens the board manager
-  (`BoardManagerSheet`) on that board. Any horizontal rail ScrollView sets `flexGrow: 0` — RN's default
-  flexGrow 1 makes it swallow the column.
+- A screen header is TWO rows of keys and nothing else: row 1 the view toggle and the status keys
+  (To do · Done · All — ONE lit pill that glides between them on the UI thread); row 2 the Boards key and
+  the Overview key. No dropdowns, no stats chips, no filter key, no header + (the day panel and the list's
+  inline field add tasks; the tag / owner filters live on the Overview page). The Boards key is a hairline
+  pill that reads the selected board (dot + name, or "Boards") and lights (text colour as fill) while a
+  board is selected or the rail is open. What the list is scoped to lives in an inset-card RAIL the key
+  toggles (`TasksScreen/components/BoardRail`), HIDDEN by default and closing on a pick: "All" first, one
+  card per board carrying its own progress (done / total, a hairline track, the overdue count), a dashed +
+  key last. The selected card inverts like a lit key; tap scopes, long-press opens the board manager
+  (`BoardManagerSheet`) on that board. The rail REVEALS the way the old board dropdown did: absolute at
+  the top of the content host, the page below slides down by its height on one Reanimated progress
+  (280 / 240 ms, bezier 0.4 0 0.2 1) — never a mount that relayouts the calendar. Any horizontal rail
+  ScrollView sets `flexGrow: 0` — RN's default flexGrow 1 makes it swallow the column.
+- The numbers live on the OVERVIEW page (`TasksScreen/components/OverviewPage`, an in-tree EdgeSwipePage
+  overlay over the calendar): four inset stat tiles (To do · Done · Late · Today — icon tile, big bold
+  figure, muted caption, exactly the reference tile), then one inset row per board with its progress, then
+  tags; a row drills into the board's lists with a Show key that scopes the calendar. Stats come from
+  `utils/overviewStats.js` (pure, tested).
 - Header type is two sizes only: small caps 10.5 pt / letter-spacing 0.9 for labels, bold tabular 18 pt
   for the figure. One accent per card (the board dot). Nothing else is coloured.
 
