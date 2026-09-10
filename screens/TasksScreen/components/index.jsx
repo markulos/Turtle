@@ -1,6 +1,5 @@
 export { FormField } from './FormField';
 export { FilterMenu } from './FilterMenu';
-export { TaskStatsModal } from './TaskStatsModal';
 export { TaskForm } from './TaskForm';
 export { TaskDetail } from './TaskDetail';
 export { TaskItem } from './TaskItem';

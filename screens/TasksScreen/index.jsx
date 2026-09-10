@@ -113,7 +113,6 @@ const eventIsOver = (item, nowMs) => {
 };
 import {
   FilterMenu,
-  TaskStatsModal,
   TaskForm,
   TaskDetail,
   TaskItem,
@@ -131,10 +130,19 @@ import { useCelebration } from '../../context/CelebrationContext';
 import BoardRail from './components/BoardRail';
 import StatusSegment from './components/StatusSegment';
 import BoardManagerSheet from './components/BoardManagerSheet';
+import OverviewPage from './components/OverviewPage';
 
 
 // Distinct project colours that read well against the green/yellow palette.
 // Module-level (a pure constant) so it isn't rebuilt on every render.
+// The board rail's reveal: the rail sits ABSOLUTE at the top of the content
+// host and the whole page below slides down by its height on a compositor
+// transform (the old board-dropdown mechanism — the calendar never relayouts).
+const RAIL_H = 80; // BoardRail: 66pt card + 6 + 8 padding
+const RAIL_OPEN_MS = 280;
+const RAIL_CLOSE_MS = 240;
+const RAIL_EASE = ReEasing.bezier(0.4, 0, 0.2, 1);
+
 const PROJECT_COLORS = [
   '#4CAF50', // Green
   '#2196F3', // Blue
@@ -479,7 +487,7 @@ export default function TasksScreen() {
   const { dispatch: dispatchCommand } = useCommandBus();
   const menuAnimation = useRef(new Animated.Value(0)).current;
   const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const [showStats, setShowStats] = useState(false);
+  const [showOverview, setShowOverview] = useState(false);
   // Mirror of the calendar's selected day (CalendarView owns it; it reports
   // up via onSelectedDateChange) so the stats panel can show that day's
   // scheduled/completed counts.
@@ -491,6 +499,22 @@ export default function TasksScreen() {
   // Boards key opens it, picking a board closes it. The key itself shows the
   // selected board (dot + name) so the scope stays readable with it closed.
   const [railOpen, setRailOpen] = useState(false);
+  const railProgress = useSharedValue(0);
+  useEffect(() => {
+    railProgress.value = withTiming(railOpen ? 1 : 0, {
+      duration: railOpen ? RAIL_OPEN_MS : RAIL_CLOSE_MS,
+      easing: RAIL_EASE,
+    });
+  }, [railOpen, railProgress]);
+  // The page below the header slides down by the rail's height as it reveals.
+  const contentShiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: railProgress.value * RAIL_H }],
+  }));
+  // The rail itself fades + settles into place from a touch above.
+  const railRevealStyle = useAnimatedStyle(() => ({
+    opacity: railProgress.value,
+    transform: [{ translateY: (railProgress.value - 1) * 16 }],
+  }));
   const openBoardManager = useCallback((name = null) => {
     setManageBoard(typeof name === 'string' ? name : null);
     setShowProjectManager(true);
@@ -1755,27 +1779,12 @@ export default function TasksScreen() {
         </View>
 
         <StatusSegment value={statusFilter} onChange={setStatusFilter} theme={theme} />
+      </View>
+
+      {/* Row 2: what the list is scoped to (Boards) and where the numbers live
+          (Overview). The tag / owner filters moved into the Overview page. */}
+      <View style={styles.headerRow2}>
         <View style={styles.headerKeys}>
-          <TouchableOpacity
-            style={[styles.headerFilterBtn, hasActiveFilters && styles.headerFilterBtnActive]}
-            onPress={() => setShowFilterMenu(true)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityRole="button"
-            accessibilityLabel={hasActiveFilters ? 'Filters, active' : 'Filters'}
-          >
-            <Icon
-              name="filter-variant"
-              size={20}
-              color={hasActiveFilters ? theme.colors.textPrimary : theme.colors.textTertiary}
-            />
-            {hasActiveFilters && (
-              <View style={styles.headerFilterBadge}>
-                <Text style={styles.headerFilterBadgeText}>
-                  {selectedTags.length + selectedOwners.length}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
           {/* The Boards key: opens / closes the rail; reads the selected board. */}
           <TouchableOpacity
             style={[styles.headerBoardKey, (railOpen || selectedProject !== 'All') && styles.headerBoardKeyLit]}
@@ -1802,21 +1811,26 @@ export default function TasksScreen() {
               color={(railOpen || selectedProject !== 'All') ? theme.colors.background : theme.colors.textTertiary}
             />
           </TouchableOpacity>
+          {/* The Overview key: every board's numbers on a page over the calendar. */}
+          <TouchableOpacity
+            style={[styles.headerBoardKey, showOverview && styles.headerBoardKeyLit]}
+            onPressIn={() => tapHaptic()}
+            onPress={() => setShowOverview(true)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityRole="button"
+            accessibilityLabel={hasActiveFilters ? `Overview, ${selectedTags.length + selectedOwners.length} filters active` : 'Overview'}
+            testID="header-overview-key"
+          >
+            <Icon name="chart-box-outline" size={15} color={showOverview ? theme.colors.background : theme.colors.textTertiary} />
+            <Text style={[styles.headerBoardText, showOverview && styles.headerBoardTextLit]} numberOfLines={1}>Overview</Text>
+            {hasActiveFilters && (
+              <View style={styles.headerFilterBadge}>
+                <Text style={styles.headerFilterBadgeText}>{selectedTags.length + selectedOwners.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
-
-      {railOpen && (
-        <BoardRail
-          boards={projects}
-          selected={selectedProject}
-          stats={boardStats}
-          colorOf={getProjectColor}
-          onSelect={(name) => { setSelectedProject(name); setRailOpen(false); }}
-          onManage={openBoardManager}
-          onAddBoard={() => openBoardManager(null)}
-          theme={theme}
-        />
-      )}
 
       {/* Project-picker overlay host. The picker (rendered at the bottom of
           this host) is an absolute overlay pinned just below the header.
@@ -1827,7 +1841,7 @@ export default function TasksScreen() {
           can't spill over the tab bar / FAB. Modals inside render via RN
           portals, so the transform doesn't touch them. */}
       <View style={styles.dropdownHost}>
-      <View style={styles.dropdownShiftLayer}>
+      <Reanimated.View style={[styles.dropdownShiftLayer, contentShiftStyle]}>
 
       {/* Active Filters */}
       {hasActiveFilters && (
@@ -1903,16 +1917,6 @@ export default function TasksScreen() {
           hasActiveFilters: selectedTags.length > 0 || selectedOwners.length > 0
         }}
         animation={menuAnimation}
-      />
-
-      <TaskStatsModal
-        visible={showStats}
-        onClose={() => setShowStats(false)}
-        tasks={tasks}
-        selectedProject={selectedProject}
-        selectedTags={selectedTags}
-        tagFilterMode={tagFilterMode}
-        selectedDate={calendarDate}
       />
 
       <TaskForm
@@ -2325,8 +2329,28 @@ export default function TasksScreen() {
         </View>
         </View>
       </Animated.ScrollView>
-      </View>
+      </Reanimated.View>
 
+      {/* The board rail: absolute at the host's top, revealed by the same
+          progress that shifts the page — the page stays glued to its bottom
+          edge through the open / close. Untouchable while closed. */}
+      <Reanimated.View
+        style={[styles.railLayer, railRevealStyle]}
+        pointerEvents={railOpen ? 'box-none' : 'none'}
+        accessibilityElementsHidden={!railOpen}
+        importantForAccessibility={railOpen ? 'auto' : 'no-hide-descendants'}
+      >
+        <BoardRail
+          boards={projects}
+          selected={selectedProject}
+          stats={boardStats}
+          colorOf={getProjectColor}
+          onSelect={(name) => { setSelectedProject(name); setRailOpen(false); }}
+          onManage={openBoardManager}
+          onAddBoard={() => openBoardManager(null)}
+          theme={theme}
+        />
+      </Reanimated.View>
       </View>
 
       {/* The "+" create button now lives in the day-planner header's right
@@ -2536,6 +2560,26 @@ export default function TasksScreen() {
         </View>
       </EdgeSwipePage>
 
+      {/* Overview: every board's numbers on a page that overlays the calendar
+          (in-tree EdgeSwipePage overlay). Mounted after the pager and the
+          boards page so it paints above both; the board manager sheet below
+          still outranks it. */}
+      <OverviewPage
+        visible={showOverview}
+        onClose={() => setShowOverview(false)}
+        tasks={tasks}
+        boards={projects}
+        colorOf={getProjectColor}
+        sharedIn={sharedInLabels}
+        selectedProject={selectedProject}
+        calendarDate={calendarDate}
+        onSelectBoard={(name) => { setSelectedProject(name); setShowOverview(false); }}
+        onOpenFilters={() => setShowFilterMenu(true)}
+        filterCount={selectedTags.length + selectedOwners.length}
+        bottomInset={tabBarHeight}
+        theme={theme}
+      />
+
       {/* Board manager: the app's sheet shell, mounted LAST so it draws over
           every other overlay on this screen. Rename keeps the selection on the
           renamed board; a row tap scopes the screen and closes. */}
@@ -2627,16 +2671,34 @@ const createStyles = (theme) => StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 10,
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 2,
   },
+  // Row 2 under the status keys: Boards + Overview, left-aligned.
+  headerRow2: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
   headerKeys: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginLeft: 'auto',
+  },
+  // The rail's layer inside the content host: pinned to the top, exactly
+  // RAIL_H tall, over the (shifted-down) page.
+  railLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: RAIL_H,
+    zIndex: 2,
   },
   // The Boards key: a hairline pill that LIGHTS (text colour as fill, page
   // colour as glyph) while the rail is open or a board is selected.
