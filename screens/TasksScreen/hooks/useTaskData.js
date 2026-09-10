@@ -333,6 +333,35 @@ export const useTaskData = (api, isConnected, onTaskCompleted) => {
     }
   };
 
+  // Optimistic-first rename: the board list, every task on it and the caller's
+  // selection flip at once; PUT /projects/:name persists (the server also
+  // re-points nested boards + shares); revert on failure. Boards shared WITH
+  // me are not mine to rename — the server 404s, the sheet hides the control.
+  const renameProject = async (oldName, newName) => {
+    const from = String(oldName || '').trim();
+    const to = String(newName || '').trim();
+    if (!from || !to || from === to) return false;
+    if (projects.some((p) => p !== from && p.toLowerCase() === to.toLowerCase())) {
+      Alert.alert('Board exists', `You already have a board named "${to}".`);
+      return false;
+    }
+    const prevProjects = projects;
+    const prevTasks = tasksRef.current;
+    setProjects((prev) => prev.map((p) => (p === from ? to : p)).sort((a, b) => a.localeCompare(b)));
+    setTasks((prev) => prev.map((t) => (t && t.project === from ? { ...t, project: to } : t)));
+    try {
+      const res = await api.put(`/projects/${encodeURIComponent(from)}`, { newName: to });
+      if (res && Array.isArray(res.projects)) setProjects(res.projects);
+      return true;
+    } catch (error) {
+      console.error('Rename project error:', error);
+      setProjects(prevProjects);
+      setTasks(prevTasks);
+      Alert.alert('Error', 'Failed to rename board');
+      return false;
+    }
+  };
+
   const deleteTask = async (taskId) => {
     try {
       const newTasks = tasksRef.current.filter(t => t.id !== taskId);
@@ -433,7 +462,7 @@ export const useTaskData = (api, isConnected, onTaskCompleted) => {
 
   return {
     tasks, setTasks, projects, setProjects, allTags, setAllTags, loading,
-    loadData, saveTasks, collectTags, addProject, deleteProject, deleteTask,
+    loadData, saveTasks, collectTags, addProject, renameProject, deleteProject, deleteTask,
     handleAddSubtask,
     handleToggleSubtask,
     handleDeleteSubtask,

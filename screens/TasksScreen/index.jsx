@@ -114,7 +114,6 @@ const eventIsOver = (item, nowMs) => {
 import {
   FilterMenu,
   TaskStatsModal,
-  ProjectManager,
   TaskForm,
   TaskDetail,
   TaskItem,
@@ -131,6 +130,7 @@ import { useOpenTarget } from '../../context/OpenTargetContext';
 import { useCelebration } from '../../context/CelebrationContext';
 import BoardRail from './components/BoardRail';
 import StatusSegment from './components/StatusSegment';
+import BoardManagerSheet from './components/BoardManagerSheet';
 
 
 // Distinct project colours that read well against the green/yellow palette.
@@ -485,6 +485,12 @@ export default function TasksScreen() {
   // scheduled/completed counts.
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [showProjectManager, setShowProjectManager] = useState(false);
+  // The board a long-press on the rail asked to edit; the sheet opens on it.
+  const [manageBoard, setManageBoard] = useState(null);
+  const openBoardManager = useCallback((name = null) => {
+    setManageBoard(typeof name === 'string' ? name : null);
+    setShowProjectManager(true);
+  }, []);
   const [showTaskForm, setShowTaskForm] = useState(false);
   // Whose-profile-is-open: { userId, ownerName } set when a task's owner badge
   // is tapped on the shared calendar; drives the FriendCard popup below.
@@ -624,7 +630,7 @@ export default function TasksScreen() {
   
   const {
     tasks, setTasks, projects, allTags,
-    loadData, saveTasks, collectTags, addProject, deleteProject,
+    loadData, saveTasks, collectTags, addProject, renameProject, deleteProject,
     handleAddSubtask,
     handleToggleSubtask,
     handleDeleteSubtask,
@@ -1797,8 +1803,8 @@ export default function TasksScreen() {
         stats={boardStats}
         colorOf={getProjectColor}
         onSelect={setSelectedProject}
-        onManage={() => setShowProjectManager(true)}
-        onAddBoard={() => setShowProjectManager(true)}
+        onManage={openBoardManager}
+        onAddBoard={() => openBoardManager(null)}
         theme={theme}
       />
 
@@ -1897,15 +1903,6 @@ export default function TasksScreen() {
         selectedTags={selectedTags}
         tagFilterMode={tagFilterMode}
         selectedDate={calendarDate}
-      />
-
-      <ProjectManager
-        visible={showProjectManager}
-        onClose={() => setShowProjectManager(false)}
-        projects={projects}
-        tasks={tasks}
-        onAdd={addProject}
-        onDelete={deleteProject}
       />
 
       <TaskForm
@@ -2528,6 +2525,35 @@ export default function TasksScreen() {
           />
         </View>
       </EdgeSwipePage>
+
+      {/* Board manager: the app's sheet shell, mounted LAST so it draws over
+          every other overlay on this screen. Rename keeps the selection on the
+          renamed board; a row tap scopes the screen and closes. */}
+      {showProjectManager && (
+        <BoardManagerSheet
+          boards={projects}
+          tasks={tasks}
+          stats={boardStats}
+          colorOf={getProjectColor}
+          sharedIn={sharedInLabels}
+          selected={selectedProject}
+          initialBoard={manageBoard}
+          bottomInset={tabBarHeight}
+          theme={theme}
+          onClose={() => setShowProjectManager(false)}
+          onAdd={addProject}
+          onRename={async (from, to) => {
+            const ok = await renameProject(from, to);
+            if (ok && selectedProject === from) setSelectedProject(to);
+            return ok;
+          }}
+          onDelete={(name, opts) => {
+            if (selectedProject === name) setSelectedProject('All');
+            return deleteProject(name, opts);
+          }}
+          onSelect={(name) => { setSelectedProject(name); setShowProjectManager(false); }}
+        />
+      )}
     </View>
   );
 }

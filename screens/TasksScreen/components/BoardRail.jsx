@@ -19,7 +19,7 @@ import { tapHaptic, impactHaptic } from '../../../utils/haptics';
 import { boardLabel } from '../utils/taskHelpers';
 import { insetCardPalette } from '../utils/cardPalette';
 
-const CARD_W = 118;
+const CARD_W = 128;
 const CARD_H = 66;
 
 function BoardCard({ label, dot, stat, selected, onPress, onLongPress, pal, testID }) {
@@ -50,11 +50,11 @@ function BoardCard({ label, dot, stat, selected, onPress, onLongPress, pal, test
       ]}
     >
       <View style={styles.cardTop}>
-        <View style={[styles.dot, { backgroundColor: dot }]} />
+        {dot ? <View style={[styles.dot, { backgroundColor: dot }]} /> : null}
         <Text style={[styles.label, { color: sub }]} numberOfLines={1}>{label}</Text>
       </View>
       <View style={styles.cardBottom}>
-        <Text style={[styles.count, { color: fg }]} numberOfLines={1}>
+        <Text style={[styles.count, styles.countWrap, { color: fg }]} numberOfLines={1}>
           {done}<Text style={[styles.countTotal, { color: sub }]}>/{total}</Text>
         </Text>
         {overdue > 0 && (
@@ -74,6 +74,10 @@ function BoardRail({ boards, selected, stats, colorOf, onSelect, onManage, onAdd
   return (
     <ScrollView
       horizontal
+      // A ScrollView is flexGrow 1 by default: as a column child it would
+      // swallow every free point above the calendar (that was the "calendar
+      // gone, margins everywhere" bug). The rail is exactly one card tall.
+      style={styles.railScroll}
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.rail}
       keyboardShouldPersistTaps="handled"
@@ -81,7 +85,7 @@ function BoardRail({ boards, selected, stats, colorOf, onSelect, onManage, onAdd
     >
       <BoardCard
         label="All"
-        dot={theme.colors.textSecondary}
+        dot={null}
         stat={allStat}
         selected={selected === 'All'}
         onPress={() => onSelect('All')}
@@ -119,9 +123,14 @@ function BoardRail({ boards, selected, stats, colorOf, onSelect, onManage, onAdd
 export default memo(BoardRail);
 
 const styles = StyleSheet.create({
+  railScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
   rail: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingTop: 6,
+    paddingBottom: 8,
     gap: 8,
     alignItems: 'center',
   },
@@ -157,6 +166,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 5,
   },
+  countWrap: {
+    flexShrink: 1,
+  },
   count: {
     fontSize: 18,
     fontWeight: '800',
@@ -172,6 +184,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.4,
     flexShrink: 1,
+    marginLeft: 8,
   },
   track: {
     position: 'absolute',
