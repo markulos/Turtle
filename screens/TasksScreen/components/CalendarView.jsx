@@ -45,6 +45,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 // Navigation uses. Not on RN's public index, hence the deep import.
 import { VirtualizedListContextResetter } from 'react-native/Libraries/Lists/VirtualizedListContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../../context/ThemeContext';
 import { formatDueDate, isOverdue, itemTypeOf, itemColorOf, itemIconOf, taskPassesFilters, matchesRecurrence, isOccurrenceCompleted, parseLocalYMD } from '../utils/taskHelpers';
 import { TaskQuickInspector } from './TaskQuickInspector';
@@ -2666,6 +2667,24 @@ export const CalendarView = ({
           it can be dragged up/down by the finger; a plain tap still
           toggles via the TouchableOpacity onPress. */}
       <Reanimated.View style={[styles.sheet, sheetStyle]}>
+        {/* The desktop stat tile's surface: a soft top-to-bottom gradient over
+            the base fill, an inset shadow along the top rim, a hairline of
+            light at the bottom. Sections above it stay transparent. */}
+        <LinearGradient
+          pointerEvents="none"
+          colors={theme.mode === 'dark'
+            ? ['rgba(0,0,0,0.18)', 'rgba(255,255,255,0.015)']
+            : ['rgba(0,0,0,0.04)', 'rgba(255,255,255,0.6)']}
+          style={StyleSheet.absoluteFill}
+        />
+        <LinearGradient
+          pointerEvents="none"
+          colors={theme.mode === 'dark'
+            ? ['rgba(0,0,0,0.55)', 'rgba(0,0,0,0)']
+            : ['rgba(0,0,0,0.10)', 'rgba(0,0,0,0)']}
+          style={styles.sheetTopShade}
+        />
+        <View pointerEvents="none" style={[styles.sheetBottomLight, { backgroundColor: theme.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.85)' }]} />
         {/* Only the header is the docked "peek" (its measured height drives the
             sheet travel). The week strip lives BELOW it, so it's off-screen
             when docked and slides into view only as the sheet is brought up. */}
@@ -3207,13 +3226,29 @@ const createStyles = (theme) => StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: theme.colors.surface,
-    // Match the add-task card's rounded top + top hairline.
+    // The desktop stat tile's base fill (its gradient + rims are painted by
+    // the overlays at the top of the sheet).
+    backgroundColor: theme.mode === 'dark' ? '#161719' : '#ECEEF2',
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.border,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderColor: theme.mode === 'dark' ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.08)',
     overflow: 'hidden',
+  },
+  sheetTopShade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 6,
+  },
+  sheetBottomLight: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 1,
   },
   // Drag-handle pill centred at the top of the sheet header — the affordance
   // that says "drag me up/down". Matches the add-task card's handle (44×5,
@@ -3252,7 +3287,7 @@ const createStyles = (theme) => StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 0.5,
     borderBottomColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'transparent',
   },
   taskListHeaderContent: {
     flex: 1,
@@ -3336,7 +3371,7 @@ const createStyles = (theme) => StyleSheet.create({
     paddingRight: 16,
     paddingTop: 10,
     paddingBottom: 8,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'transparent',
     borderBottomWidth: 0.5,
     borderBottomColor: theme.colors.border,
   },
@@ -3457,7 +3492,7 @@ const createStyles = (theme) => StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 6,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'transparent',
     borderBottomWidth: 0.5,
     borderBottomColor: theme.colors.border,
   },
@@ -3563,7 +3598,7 @@ const createStyles = (theme) => StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 6,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'transparent',
   },
   scheduleToolbarTitle: {
     fontSize: 12,
@@ -3590,10 +3625,10 @@ const createStyles = (theme) => StyleSheet.create({
   // as a smooth wipe rather than a hard pop.
   scheduleSwap: {
     overflow: 'hidden',
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'transparent',
   },
   collapsedSchedule: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'transparent',
     paddingLeft: 8,
     paddingRight: 16,
     paddingTop: 4,
@@ -3637,7 +3672,7 @@ const createStyles = (theme) => StyleSheet.create({
   hourGrid: {
     position: 'relative',
     height: HOUR_GRID_HEIGHT,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'transparent',
   },
   // One hour row: label on the left, hairline divider across the rest.
   // Height matches HOUR_HEIGHT exactly so absolute task blocks land in
