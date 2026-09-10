@@ -32,6 +32,19 @@ repo skill (loaded before any UI work) and by review.
   against whatever they sit on (black on light, white on dark; the card's text colour inside a card), 2 pt,
   never grey.
 
+- SCHEDULE CARDS (the calendar's day panel, `TasksScreen/components/ScheduleCard`) are the one exception to
+  the charcoal card: a planner page. The TIME sits in a light column on the LEFT ("08 AM", 12 pt, regular,
+  tertiary); the card is a soft wash of the board colour (18 % on the light page, 26 % on the dark, radius 18,
+  no border, no shadow) with the title (16 / 600), the board name (13), a completion ring and the range
+  bottom-right — nothing else; the inspector holds the details. Untimed rows keep the shape with "any time"
+  in the time column; empty time between rows is a dashed rule with its duration. The panel header is ONE
+  line: "Task Schedule" (26 / 600) with the date beside it (12 / 300, 50 % opacity) — no hint text, no count.
+- TYPEFACE: Figtree, app-wide, installed once at startup (`utils/installFont` → `utils/fonts.js`
+  `installGlobalFont`): every Text / TextInput gets the Figtree face for its `fontWeight` — write weights
+  as usual, never a `fontFamily` (an explicit family is left alone: icon glyphs, monospace consoles).
+  Artifakt Element is the reference; Figtree is the licensed stand-in. Prefer 400–600; 700 only for figures
+  and one title per screen.
+
 ## 2. Text never overflows its container
 
 - A `Text` inside a row gets `flexShrink: 1`. Single-line labels also get `numberOfLines={1}`;
