@@ -43,21 +43,16 @@ function useSharedPulse() {
   return sharedPulse;
 }
 
-export function TaskCardSkeleton({ theme, isFirst, isLast }) {
+export function TaskCardSkeleton({ theme }) {
   const pulse = useSharedPulse();
   const block = theme.colors.border;
-  const rail = theme.mode === 'dark' ? '#FFFFFF' : '#000000';
   const card = theme.mode === 'dark' ? theme.colors.surfaceHighlight : theme.colors.surface;
   const bar = (w, h, extra) => ({ width: w, height: h, borderRadius: h / 2, backgroundColor: block, ...(extra || {}) });
   return (
     <View style={{ flexDirection: 'row', marginBottom: 12, paddingHorizontal: 14 }} pointerEvents="none">
-      {/* Rail — strong connecting line + a hollow dot where the toggle sits. */}
-      <View style={{ width: 40, alignSelf: 'stretch', alignItems: 'center' }}>
-        {!isFirst && <View style={{ position: 'absolute', left: 19, top: 0, height: 20, width: 2, backgroundColor: rail }} />}
-        {!isLast && <View style={{ position: 'absolute', left: 19, top: 20, bottom: -12, width: 2, backgroundColor: rail }} />}
-        <View style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
-          <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: card, borderWidth: 1.5, borderColor: block }} />
-        </View>
+      {/* Time column — a short bar where the real row shows its start time. */}
+      <View style={{ width: 62, paddingTop: 13 }}>
+        <View style={bar(40, 10)} />
       </View>
       {/* Card — locked to the uniform card height; when / title / subtitle bars. */}
       <Animated.View

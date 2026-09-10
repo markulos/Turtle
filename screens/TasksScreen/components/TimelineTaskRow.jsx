@@ -8,6 +8,7 @@ import { tapHaptic } from '../../../utils/haptics';
 import TaskCountdownBadge from './TaskCountdownBadge';
 import { HatchBackdrop } from './HatchBackdrop';
 import { insetCardPalette } from '../utils/cardPalette';
+import { clockLabel } from './ScheduleCard';
 
 // ── Quick time helpers (self-contained so this row works in any list) ──────────
 // Format "HH:MM" honoring the user's 12/24h preference.
@@ -37,7 +38,11 @@ const addMinutes = (hhmm, mins) => {
 const ICON = 40;
 const ICON_CENTRE = ICON / 2;
 const ROW_GAP = 12; // vertical gap below each row; the rail bridges it
-const DOT = 16; // diameter of the small completion toggle circle on the rail
+const DOT = 22; // diameter of the completion ring overlaid on the card's right edge
+// The time column on the left of every row (the planner's "08 AM"), sized
+// like ScheduleCard's so the agenda and the day panel share one left edge.
+const TIME_COL = 62;
+const parseHM = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 
 // Locked card height for `uniform` rows (see below): paddingVertical 9×2 +
 // when-line ~18 + one-line title ~20 + subtitle ~18 = 74 at fontScale 1. The
@@ -75,24 +80,9 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
   void cardColor;
   // The connecting rail can be emphasised by the caller (the agenda draws it as
   // the strong black/white line); defaults to the faint border tint.
-  const cRail = railColor || cBorder;
+  void railColor; // the rail is gone: the row's left edge is the time column
 
-  // Completion-toggle palette. Done = a filled disc — black on light, white on
-  // dark — with a contrasting checkmark. Not-done on light = a white centre with
-  // a grey ring; on dark = a BLACK centre with a WHITE ring, so the empty box
-  // reads crisply against the dark card.
-  const isDark = theme.mode === 'dark';
-  const cCheckFill = isDark ? '#FFFFFF' : '#000000';
-  const cCheckMark = isDark ? '#000000' : '#FFFFFF';
-  const cCheckOutline = cSub;
-  const cCheckEmptyBg = isDark ? '#000000' : '#FFFFFF';
-  // The empty ring is full-contrast against the page it sits on — black on
-  // light, white on dark — never a grey.
-  const cCheckEmptyBorder = isDark ? '#FFFFFF' : '#000000';
-  void cCheckOutline;
-  // Opaque backing behind the toggle disc (black on dark, white on light) so the
-  // connector line tucks cleanly UNDER the checkmark instead of showing through.
-  const cCheckBackdrop = isDark ? '#000000' : '#FFFFFF';
+  // The completion ring takes the card's own inks (see the render).
 
   // `done` (optional) overrides the raw boolean — recurring tasks track
   // per-occurrence completion in meta.completedDates, so the CALLER decides
@@ -169,79 +159,16 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
   );
 
   return (
-    <View style={{ flexDirection: 'row', marginBottom: ROW_GAP, paddingHorizontal: 14 }}>
-      {/* Rail column — connecting line segments + the completion toggle.
-          overflow visible + zIndex so the connector line below can spill out
-          of this column and paint over the card. */}
-      <View style={{ width: ICON, alignSelf: 'stretch', alignItems: 'center', overflow: 'visible', zIndex: 2 }}>
-        {!isFirst && (
-          <View style={{ position: 'absolute', left: ICON_CENTRE - 1, top: 0, height: ICON_CENTRE, width: 2, backgroundColor: cRail }} />
-        )}
-        {!isLast && (
-          <View style={{ position: 'absolute', left: ICON_CENTRE - 1, top: ICON_CENTRE, bottom: -ROW_GAP, width: 2, backgroundColor: cRail }} />
-        )}
-        {/* Completion toggle — a small circle sitting on the rail. Tap it to
-            complete: it fills in (black on light / white on dark) with a
-            contrasting checkmark; incomplete is a white-centred circle with a
-            grey ring. The 40px touch target keeps the tap area generous while
-            the visible disc stays small and centred on the connecting line. */}
-        <TouchableOpacity
-          onPress={() => { tapHaptic(); onToggleComplete?.(item); }}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel={completed ? 'Mark not done' : 'Mark done'}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          // zIndex/elevation above the connector line so the checkmark paints
-          // OVER it (line is above the card but below the checkmark).
-          style={{ width: ICON, height: ICON, alignItems: 'center', justifyContent: 'center', zIndex: 4, elevation: 4 }}
-        >
-          {/* Opaque backdrop so the line disappears behind the checkmark. */}
-          <View style={{ position: 'absolute', width: DOT + 2, height: DOT + 2, borderRadius: (DOT + 2) / 2, backgroundColor: cCheckBackdrop }} />
-          <View
-            style={{
-              width: DOT,
-              height: DOT,
-              borderRadius: DOT / 2,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: completed ? cCheckFill : cCheckEmptyBg,
-              borderWidth: completed ? 0 : 2,
-              borderColor: cCheckEmptyBorder,
-            }}
-          >
-            {completed && <Icon name="check" size={DOT - 5} color={cCheckMark} />}
-          </View>
-        </TouchableOpacity>
-
-        {/* Connector: a horizontal line from the CENTRE of the toggle circle
-            (top = ICON_CENTRE − half thickness; the disc is centred at y=20 in
-            the 40px toggle), running right over the card and lapping onto it by
-            5px. left = ICON_CENTRE (start at circle centre); width reaches the
-            card's left edge (ICON_CENTRE→ICON is the toggle's right half = 20,
-            + 12px card margin) + 5px overlap = 37. Only drawn when the card has
-            a time/date to point at. pointerEvents off so it never eats taps. */}
-        {(item.time || (!hideDate && whenDate)) && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: ICON_CENTRE - 1,
-              left: ICON_CENTRE,
-              // Starts under the checkmark (masked by the backdrop) and runs to
-              // 5px PAST the card's left edge: toggle right-half (ICON−ICON_CENTRE)
-              // + 12px card margin + 5px overlap onto the card.
-              width: (ICON - ICON_CENTRE) + 12 + 5,
-              height: 1.5,
-              backgroundColor: cCheckFill,
-              opacity: 0.8,
-              borderRadius: 1,
-              // Above the card, below the checkmark.
-              zIndex: 3,
-              elevation: 3,
-            }}
-          />
-        )}
-      </View>
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: ROW_GAP, paddingHorizontal: 14 }}>
+      {/* Time column — the planner's left edge: the start time beside the
+          card ("07:00 PM"), a quiet dash for an untimed task. Same size and
+          ink as ScheduleCard's column so the agenda and the day panel line up. */}
+      <Text
+        style={{ width: TIME_COL, paddingTop: 11, paddingRight: 6, fontSize: 14, fontWeight: '500', color: theme.colors.textSecondary, fontVariant: ['tabular-nums'], letterSpacing: 0.1 }}
+        numberOfLines={1}
+      >
+        {item.time ? clockLabel(parseHM(item.time), use24h) : '—'}
+      </Text>
 
       {/* Card */}
       <TouchableOpacity
@@ -262,11 +189,10 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
           // Inset: the recess catches light along its top edge.
           borderTopColor: hatchColor || inv.edgeTop,
           paddingVertical: 9,
-          paddingHorizontal: 12,
+          paddingLeft: 12,
+          // Room for the completion ring overlaid on the right edge.
+          paddingRight: 12 + DOT + 12,
           opacity: completed ? 0.65 : 1,
-          // Depth: the card is a raised object on the page (shadow + lit edge),
-          // not a flat block. No overflow:hidden here — on iOS that masks the
-          // shadow; the hatch backdrop clips itself to the radius.
           ...inv.shadow,
           // Uniform mode: pixel-exact card height so the row's total height is
           // a constant the agenda's placeholder geometry can rely on.
@@ -276,8 +202,7 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
         }}
       >
         {/* Low-opacity diagonal hatch in the board's colour, behind the content
-            (calendar day pane only — callers pass hatchColor when the task
-            belongs to a board). Self-clips to the card's radius. */}
+            (callers pass hatchColor when the task belongs to a board). */}
         <HatchBackdrop color={hatchColor} style={{ borderRadius: 12 }} />
         {trailing ? (
           <>
@@ -285,6 +210,33 @@ export const TimelineTaskRow = ({ item, onPress, onLongPress, onToggleComplete, 
             {trailing}
           </>
         ) : cardBody}
+        {/* Completion ring — INSIDE the card, overlaid on its right edge and
+            vertically centred. Done = filled with the card's text colour and a
+            check in the card colour; not done = a hairline ring. */}
+        <TouchableOpacity
+          onPress={() => { tapHaptic(); onToggleComplete?.(item); }}
+          activeOpacity={0.7}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: completed }}
+          accessibilityLabel={completed ? 'Mark not done' : 'Mark done'}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{ position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center', zIndex: 4, elevation: 4 }}
+        >
+          <View
+            style={{
+              width: DOT,
+              height: DOT,
+              borderRadius: DOT / 2,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: completed ? cText : 'transparent',
+              borderWidth: completed ? 0 : 1.5,
+              borderColor: cText,
+            }}
+          >
+            {completed && <Icon name="check" size={DOT - 8} color={cCardBg} />}
+          </View>
+        </TouchableOpacity>
       </TouchableOpacity>
     </View>
   );
