@@ -39,6 +39,10 @@ repo skill (loaded before any UI work) and by review.
   bottom-right — nothing else; the inspector holds the details. Untimed rows keep the shape with "any time"
   in the time column; empty time between rows is a dashed rule with its duration. The panel header is ONE
   line: "Task Schedule" (26 / 600) with the date beside it (12 / 300, 50 % opacity) — no hint text, no count.
+  The panel's SURFACE is the desktop pomodoro stat tile: base #ECEEF2 (light) / #161719 (dark), 1 px border
+  rgba(0,0,0,.08) / .45, a top-to-bottom gradient overlay (rgba(0,0,0,.04)→rgba(255,255,255,.6) light;
+  .18→.015 dark), a 6 pt inset shade along the top rim, a 1 px light line at the bottom; nothing inside the
+  panel paints a flat surface over it. A pinned bar lifted onto the keyboard keeps 12 pt of air above it.
 - TYPEFACE: Figtree, app-wide, installed once at startup (`utils/installFont` → `utils/fonts.js`
   `installGlobalFont`): every Text / TextInput gets the Figtree face for its `fontWeight` — write weights
   as usual, never a `fontFamily` (an explicit family is left alone: icon glyphs, monospace consoles).
