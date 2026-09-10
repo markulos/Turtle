@@ -86,9 +86,7 @@ export function fontStyleFor(style) {
   return { fontFamily: familyForWeight(flat.fontWeight), fontWeight: 'normal' };
 }
 
-function wrapModule(mod, name) {
-  const Orig = mod && mod.default;
-  if (typeof Orig !== 'function' || Orig.__turtleFont) return;
+function makeWrapped(Orig, name) {
   function Wrapped(props) {
     const add = fontStyleFor(props.style);
     if (!add) return React.createElement(Orig, props);
@@ -99,13 +97,45 @@ function wrapModule(mod, name) {
   Wrapped.displayName = name;
   Wrapped.__turtleFont = true;
   Wrapped.__original = Orig;
-  mod.default = Wrapped;
+  return Wrapped;
 }
 
-/** Make Figtree the face of every Text / TextInput. Call once, first thing. */
+/**
+ * Swap one export on react-native's index object. That object is a plain
+ * literal of lazy GETTERS (`get Text() { return require(...).default }`), and
+ * accessor properties of an object literal are configurable — so the getter
+ * can be replaced with one that returns the wrapper. (The Text / TextInput
+ * MODULES themselves are not an option: in the release bundle Metro emits
+ * their `default` as a non-configurable getter, and assigning to it throws
+ * under strict mode — that was a launch crash, which expo-updates answered
+ * by falling back to the factory bundle.) Returns whether the swap took.
+ */
+function swapIndexExport(RN, name) {
+  const desc = Object.getOwnPropertyDescriptor(RN, name);
+  if (!desc || !desc.configurable) return false;
+  const Orig = RN[name];
+  if (typeof Orig !== 'function' || Orig.__turtleFont) return !!(Orig && Orig.__turtleFont);
+  const Wrapped = makeWrapped(Orig, name);
+  Object.defineProperty(RN, name, { configurable: true, enumerable: true, get: () => Wrapped });
+  return RN[name] === Wrapped;
+}
+
+/**
+ * Make Figtree the face of every Text / TextInput. Call once, first thing.
+ * MUST NOT throw: it runs at module load, before anything is on screen, and
+ * an exception here is a launch crash — expo-updates would then fall back to
+ * the factory bundle (ON_ERROR_RECOVERY) and the phone would silently lose
+ * every OTA since. A failed install just leaves the system face in place.
+ */
 export function installGlobalFont() {
-  // eslint-disable-next-line global-require
-  wrapModule(require('react-native/Libraries/Text/Text'), 'Text');
-  // eslint-disable-next-line global-require
-  wrapModule(require('react-native/Libraries/Components/TextInput/TextInput'), 'TextInput');
+  const result = { Text: false, TextInput: false };
+  try {
+    // eslint-disable-next-line global-require
+    const RN = require('react-native');
+    result.Text = swapIndexExport(RN, 'Text');
+    result.TextInput = swapIndexExport(RN, 'TextInput');
+  } catch (e) {
+    console.warn('[fonts] global font install skipped:', e && e.message);
+  }
+  return result;
 }
