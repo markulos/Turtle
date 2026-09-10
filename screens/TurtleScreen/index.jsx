@@ -48,7 +48,6 @@ import { generatedName } from '../../utils/avatar';
 import { useCommandBus } from '../../context/CommandBusContext';
 import { useOpenTarget } from '../../context/OpenTargetContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { interceptAndSend } from '../../services/AICommandInterceptor';
 import { sendOrQueue } from '../../services/offlineQueue';
 import VaultOverlay from './components/VaultOverlay';
 import TimerMessage from './components/TimerMessage';
@@ -336,7 +335,6 @@ export default function TurtleScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [debugLogs, setDebugLogs] = useState([]);
-  const [encryptionKey, setEncryptionKey] = useState(null);
   
   // History pagination state
   const [historyOffset, setHistoryOffset] = useState(0);
@@ -1210,15 +1208,11 @@ export default function TurtleScreen() {
     inputRef.current?.focus();
   };
 
-  // Initialize encryption key, then fetch history once on mount. Runs a SINGLE
-  // time (empty deps): fetchChatHistory's identity changes after the first page
-  // loads (its deps include historyOffset/hasMoreHistory), so depending on it
-  // here previously re-fired a redundant page-0 refetch on every offset change.
+  // Fetch history once on mount. Runs a SINGLE time (empty deps):
+  // fetchChatHistory's identity changes after the first page loads (its deps
+  // include historyOffset/hasMoreHistory), so depending on it here previously
+  // re-fired a redundant page-0 refetch on every offset change.
   useEffect(() => {
-    const DEV_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-    setEncryptionKey(DEV_KEY);
-
-    // Fetch real history from DB instead of a hardcoded welcome message
     fetchChatHistory(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1286,8 +1280,8 @@ export default function TurtleScreen() {
 
     // A Claude image with no caption is still sendable (image-only turn).
     const claudeImageReady = claudeUiMode === 'session' && !!claudeImage;
-    if ((!baseText.trim() && !claudeImageReady) || !isConnected || !encryptionKey) {
-      addDebugLog('Error', 'Missing Input, Connection, or Encryption Key');
+    if ((!baseText.trim() && !claudeImageReady) || !isConnected) {
+      addDebugLog('Error', 'Missing input or connection');
       return;
     }
 
@@ -1720,11 +1714,10 @@ export default function TurtleScreen() {
         blocks: board,
       }, ...prev]);
 
-      // A proposed call against Turtle's own API. Checked BEFORE the legacy
-      // path: this payload is a method and a path, not an executable and args,
-      // so `interceptAndSend` would fail to find anything it recognises and
-      // surface that as an error. It also must not auto-run — the whole point
-      // of a proposal is that the person decides. It becomes a card.
+      // A proposed call against Turtle's own API. It must not auto-run — the
+      // whole point of a proposal is that the person decides. It becomes a
+      // card. (The encrypted auto-execute path that used to sit behind this
+      // is gone: the server's /api/execute was removed with it, 2026-09-10.)
       // The server emits a proposed write BOTH ways — as an `intent` (this
       // card, which is all this app used to understand) and as a `call` action
       // inside the board. That is deliberate: the web app renders only blocks,
@@ -1743,29 +1736,7 @@ export default function TurtleScreen() {
           sender: 'system',
           timestamp: new Date().toISOString(),
         }, ...prev]);
-      } else if (intent && typeof intent === 'object' && intent.payload) {
-        const serverUrl = getBaseUrl();
-        const result = await interceptAndSend(
-          intent,
-          encryptionKey,
-          serverUrl,
-          token,
-          addDebugLog
-        );
 
-        if (result.success) {
-          const executionResult = result.serverResponse?.data?.result;
-          const resultText = typeof executionResult === 'string' 
-            ? executionResult 
-            : JSON.stringify(executionResult, null, 2);
-
-          setMessages(prev => [{
-            id: generateId(),
-            text: `✅ Intent executed:\n${resultText}`,
-            sender: 'system',
-            timestamp: new Date().toISOString(),
-          }, ...prev]);
-        }
       }
     } catch (error) {
       console.error('[AI Chat] Error:', error);
@@ -1778,18 +1749,18 @@ export default function TurtleScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [inputText, claudeImage, isConnected, encryptionKey, getBaseUrl, api, messages, token, debugMode, addDebugLog, handleOpenVault, handleStartTimer, handleStopTimer, durations, claudeUiMode, claudeSend, claudeStart, claudeStartAdmin, claudeStop, claudeLogin, claudeLoginInput, claudeLoginStop, claudeClose, terminalOpen, terminalSend, terminalStart, terminalStop, terminalClose]);
+  }, [inputText, claudeImage, isConnected, getBaseUrl, api, messages, token, debugMode, addDebugLog, handleOpenVault, handleStartTimer, handleStopTimer, durations, claudeUiMode, claudeSend, claudeStart, claudeStartAdmin, claudeStop, claudeLogin, claudeLoginInput, claudeLoginStop, claudeClose, terminalOpen, terminalSend, terminalStart, terminalStop, terminalClose]);
 
   // Consume a command pushed from the global CommandConsole. Fires once per
   // dispatch through the same send pipeline as typing it; waits for the
-  // connection + encryption key so an early dispatch isn't dropped.
+  // connection so an early dispatch isn't dropped.
   useEffect(() => {
-    if (pendingCommand && isConnected && encryptionKey) {
+    if (pendingCommand && isConnected) {
       sendMessage(pendingCommand);
       clearPendingCommand();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingCommand, isConnected, encryptionKey]);
+  }, [pendingCommand, isConnected]);
 
   // Memoized — this is a ~93-key StyleSheet.create; rebuilding it on every
   // render (i.e. every keystroke) was pure waste. theme is identity-stable
