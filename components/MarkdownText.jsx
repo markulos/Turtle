@@ -8,11 +8,25 @@
  * text used (font size / line height / colour) and the renderer derives the
  * rest — code on a translucent field, links in the accent, quotes with a bar.
  */
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { parseMarkdown } from '../utils/markdownLite';
 
 const MONO = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
+
+// Parse once per distinct text, app-wide: a recycled list cell mounts a new
+// component instance for the same message, and useMemo would parse again.
+const PARSE_CACHE_MAX = 300;
+const parseCache = new Map();
+function parseCached(text) {
+  const key = String(text || '');
+  const hit = parseCache.get(key);
+  if (hit) return hit;
+  const blocks = parseMarkdown(key);
+  if (parseCache.size >= PARSE_CACHE_MAX) parseCache.delete(parseCache.keys().next().value);
+  parseCache.set(key, blocks);
+  return blocks;
+}
 
 function openLink(url) {
   Linking.openURL(url).catch(() => {});
@@ -40,8 +54,8 @@ function Spans({ spans, colors }) {
   });
 }
 
-export default function MarkdownText({ text, style, theme, testID }) {
-  const blocks = useMemo(() => parseMarkdown(text), [text]);
+function MarkdownText({ text, style, theme, testID }) {
+  const blocks = useMemo(() => parseCached(text), [text]);
   const flat = StyleSheet.flatten(style) || {};
   const textColor = flat.color || theme?.colors?.textPrimary || '#fff';
   const fontSize = flat.fontSize || 15;
@@ -154,3 +168,5 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
 });
+
+export default memo(MarkdownText);

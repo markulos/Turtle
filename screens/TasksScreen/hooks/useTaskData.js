@@ -408,9 +408,18 @@ export const useTaskData = (api, isConnected, onTaskCompleted) => {
   // 3. Keep the cache warm: persist after any state change (load, optimistic
   //    mutation, subtask edit, …). Skipped until hydration completes so the
   //    initial empty state never overwrites a good cache.
+  //    Debounced (trailing 1 s): every tick / subtask edit / revalidate used to
+  //    JSON.stringify the whole list at once, on top of the POST's own
+  //    stringify — three full serializations per checkbox (perf sweep).
+  const cacheWriteTimerRef = useRef(null);
   useEffect(() => {
-    if (!cacheHydrated) return;
-    writeTaskCache({ tasks, projects, allTags });
+    if (!cacheHydrated) return undefined;
+    if (cacheWriteTimerRef.current) clearTimeout(cacheWriteTimerRef.current);
+    cacheWriteTimerRef.current = setTimeout(() => {
+      cacheWriteTimerRef.current = null;
+      writeTaskCache({ tasks, projects, allTags });
+    }, 1000);
+    return undefined;
   }, [tasks, projects, allTags, cacheHydrated]);
 
   // Genuine cold start: the cache has been read and came back empty, we're
