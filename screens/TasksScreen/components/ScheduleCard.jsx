@@ -98,6 +98,55 @@ export default memo(ScheduleCard);
 
 export const TIME_COL_W = 62;
 
+// A stretch of free hours longer than this collapses into ONE "Nh free" row
+// (the reference lists every hour, but a 06:00 → 22:00 day with two tasks
+// would be sixteen dashed rows).
+export const CONDENSE_AFTER_HOURS = 3;
+
+/**
+ * The condensed hour timeline for the day panel's compact schedule: from the
+ * first task's hour to the last task's end, one row per hour — a task card
+ * on the hour a task starts (the card stands for the hours it covers), a
+ * dashed empty row for a free hour, and a single "free" row for a long
+ * empty stretch. `segments` are {task, start, end} in minutes, start-sorted.
+ * Returns [{ kind: 'task', seg, minute } | { kind: 'empty', minute } |
+ * { kind: 'free', minute, minutes }].
+ */
+export function buildCondensedRows(segments) {
+  const segs = (segments || []).filter((s) => s && Number.isFinite(s.start)).slice().sort((a, b) => a.start - b.start);
+  if (!segs.length) return [];
+  const rows = [];
+  const dayEnd = Math.max(...segs.map((s) => Math.max(s.end || 0, s.start + 1)));
+  let cursor = Math.floor(segs[0].start / 60) * 60; // the hour the day starts on
+  let i = 0;
+  let guard = 0;
+  while ((i < segs.length || cursor < dayEnd) && guard++ < 200) {
+    const seg = segs[i];
+    if (seg && seg.start < cursor + 60) {
+      // Starts inside this hour (or earlier, overlapping the previous card).
+      rows.push({ kind: 'task', seg, minute: seg.start });
+      i += 1;
+      // The card covers its hours: resume on the first hour after it ends
+      // (never move backwards past the hour we are on).
+      const endHour = Math.ceil(Math.max(seg.end || seg.start + 1, seg.start + 1) / 60) * 60;
+      cursor = Math.max(cursor + 60, endHour);
+      continue;
+    }
+    // A free hour. Measure the free run up to the next task (or the day's end).
+    const next = seg ? Math.floor(seg.start / 60) * 60 : dayEnd;
+    const freeHours = Math.max(1, Math.ceil((next - cursor) / 60));
+    if (freeHours > CONDENSE_AFTER_HOURS) {
+      rows.push({ kind: 'empty', minute: cursor });
+      rows.push({ kind: 'free', minute: cursor + 60, minutes: (freeHours - 1) * 60 });
+      cursor += freeHours * 60;
+    } else {
+      rows.push({ kind: 'empty', minute: cursor });
+      cursor += 60;
+    }
+  }
+  return rows;
+}
+
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
