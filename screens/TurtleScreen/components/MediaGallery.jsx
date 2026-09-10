@@ -4828,21 +4828,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
             onReset={resetFilters}
             onClose={() => { setIsFilterSheetOpen(false); setFilterSheetFocusSearch(false); }}
           />
-
-          {/* Bulk tags — the viewer's TagsSheet over the grid, for the whole
-              selection. In-tree like the filter sheet above. */}
-          {bulkTagsOpen && (
-            <TagsSheet
-              tags={bulkCommonTags}
-              suggestions={globalAlbums}
-              onChange={changeBulkTags}
-              onClose={closeBulkTags}
-              theme={theme}
-              title="Tags"
-              subtitle={`${bulkIdsRef.current.length} photo${bulkIdsRef.current.length === 1 ? '' : 's'} selected`}
-              bottomInset={Math.max(tabBarH, insets.bottom) + 12}
-            />
-          )}
         </View>
       </EdgeSwipePage>
       </View>
@@ -5035,6 +5020,23 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
         }}
       />
 
+      {/* Bulk tags — the viewer's TagsSheet over the grid, for the whole
+          selection. RULE (docs/STYLE-RULES.md §4): an open tags sheet sits
+          above every other overlay on the screen — the selection bar, the
+          filter sheet, the headers — so it mounts LAST in the screen root
+          (ViewerSheet carries zIndex 1000), not inside the photos page. */}
+      {bulkTagsOpen && (
+        <TagsSheet
+          tags={bulkCommonTags}
+          suggestions={globalAlbums}
+          onChange={changeBulkTags}
+          onClose={closeBulkTags}
+          theme={theme}
+          title="Tags"
+          subtitle={`${bulkIdsRef.current.length} photo${bulkIdsRef.current.length === 1 ? '' : 's'} selected`}
+          bottomInset={Math.max(tabBarH, insets.bottom) + 12}
+        />
+      )}
     </View>
     </DevProfiler>
   );

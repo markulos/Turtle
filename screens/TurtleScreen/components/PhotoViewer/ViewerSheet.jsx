@@ -54,9 +54,9 @@ const CORNER_RADIUS = 24;
  * with black text — so a chip is never "a slightly different dark on dark".
  */
 export const DARK_SHEET = {
-  // Black. The blur behind it only softens the edges of what shows through
-  // at the corners; the card itself reads as a solid black surface.
-  card: 'rgba(0, 0, 0, 0.9)',
+  // Frosted: a dark tint over the BlurView so the photo shows through,
+  // softened, and white text stays legible.
+  card: 'rgba(10, 10, 12, 0.55)',
   textPrimary: '#ffffff',
   textSecondary: 'rgba(255,255,255,0.7)',
   textMuted: 'rgba(255,255,255,0.45)',
