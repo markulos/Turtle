@@ -3670,14 +3670,15 @@ const createStyles = (theme) => StyleSheet.create({
     marginBottom: 4,
     gap: 8,
   },
+  // Same ink and size as the card rows' time so the column reads as one.
   condLabel: {
-    width: 62,
-    paddingRight: 8,
-    fontSize: 12,
-    fontWeight: '400',
-    color: theme.colors.textTertiary,
+    width: 74,
+    paddingRight: 6,
+    fontSize: 14,
+    fontWeight: '500',
+    color: theme.colors.textSecondary,
     fontVariant: ['tabular-nums'],
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
   },
   condDash: {
     flex: 1,
@@ -3700,7 +3701,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   // Keeps the gap rule inside the card column (past the time labels).
   segGapSpacer: {
-    width: 62 - 8,
+    width: 74 - 8,
   },
   segGapText: {
     fontSize: 11,
