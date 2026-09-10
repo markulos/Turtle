@@ -33,8 +33,8 @@ repo skill (loaded before any UI work) and by review.
   never grey.
 
 - SCHEDULE CARDS (the calendar's day panel, `TasksScreen/components/ScheduleCard`) are the one exception to
-  the charcoal card: a planner page. The TIME sits in a light column on the LEFT ("08 AM", 12 pt, regular,
-  tertiary); the card is a soft wash of the board colour (18 % on the light page, 26 % on the dark, radius 18,
+  the charcoal card: a planner page. The TIME sits in a clear column on the LEFT ("08 AM" / "08:30 AM", 14 pt, medium,
+  secondary ink, 74 pt wide, on the card's first line); the card is a soft wash of the board colour (18 % on the light page, 26 % on the dark, radius 18,
   no border, no shadow) with the title (16 / 600), the board name (13), a completion ring and the range
   bottom-right — nothing else; the inspector holds the details. Untimed rows keep the shape with "any time"
   in the time column. The compact schedule is a CONDENSED HOUR TIMELINE (`buildCondensedRows`): every hour
