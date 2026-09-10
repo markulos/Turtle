@@ -119,6 +119,17 @@ const uploadEndpointOf = (baseUrl) => {
   const base = String(baseUrl || '').replace(/\/+$/, '');
   return base.endsWith('/api') ? `${base}/media/upload` : `${base}/api/media/upload`;
 };
+// The multipart twin of POST /share (one image per request, field "media").
+const shareUploadEndpointOf = (baseUrl) => {
+  const base = String(baseUrl || '').replace(/\/+$/, '');
+  return base.endsWith('/api') ? `${base}/share/upload` : `${base}/api/share/upload`;
+};
+/** The JSON body an upload task brought back, or null. */
+const parsedUploadBody = (result) => {
+  let body = result?.body;
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = null; } }
+  return body && typeof body === 'object' ? body : null;
+};
 
 const acceptedUploadJobId = (result) => {
   let body = result?.body;
@@ -493,27 +504,69 @@ export function ShareUploadProvider({ children }) {
         if (!ownsJob(job)) return;
 
         try {
-          let dataBase64 = await FileSystem.readAsStringAsync(img.localPath, { encoding: 'base64' });
           // Attach text/url until it's confirmed delivered, so the note/link is
           // created exactly once regardless of which image lands first.
           const carryText = !job.textConfirmed;
-          const res = await job.apiClient.post('/share', {
+          // Stable per-image index → the server derives a deterministic media
+          // id from groupId+imageIndex, so a retry after a LOST response lands
+          // on the same row instead of duplicating it.
+          const envelope = {
             board: bodyBoard(job.board),
             groupId: job.groupId,
             imageTotal: job.total,
-            // Stable per-image index → the server derives a deterministic
-            // media id from groupId+imageIndex, so a retry after a LOST
-            // response lands on the same row instead of duplicating it.
             imageIndex: i,
-            payload: {
-              text: carryText ? (job.text || undefined) : undefined,
-              url: carryText ? (job.url || undefined) : undefined,
-              images: [{ filename: img.filename, mimeType: img.mimeType, dataBase64 }],
-            },
             channel: channelForPlatform(),
-          });
+          };
+          let res = null;
+          // MULTIPART FIRST: the file streams natively and never becomes a
+          // base64 string in JavaScript (a full-size photo used to cost the JS
+          // thread seconds — perf sweep 2026-09-10). A pond without the route
+          // (404/405) → base64 JSON for the rest of this job.
+          if (job.multipartUnsupported !== true) {
+            try {
+              const result = await streamMultipartUpload({
+                url: shareUploadEndpointOf(getBaseUrlRef.current?.()),
+                fileUri: img.localPath,
+                mimeType: img.mimeType,
+                parameters: {
+                  board: envelope.board ? JSON.stringify(envelope.board) : '',
+                  groupId: envelope.groupId,
+                  imageTotal: String(envelope.imageTotal),
+                  imageIndex: String(i),
+                  text: carryText ? (job.text || '') : '',
+                  url: carryText ? (job.url || '') : '',
+                  channel: envelope.channel,
+                  filename: img.filename || '',
+                  mimeType: img.mimeType || '',
+                },
+                token: job.token,
+                label: img.filename || `image ${i + 1}`,
+                onProgress: () => {},
+                signal: job.abortController.signal,
+              });
+              res = parsedUploadBody(result);
+            } catch (e) {
+              if (/^HTTP (404|405)\b/.test(String(e?.message || ''))) {
+                job.multipartUnsupported = true;
+                res = null;
+              } else {
+                throw e;
+              }
+            }
+          }
+          if (!res) {
+            let dataBase64 = await FileSystem.readAsStringAsync(img.localPath, { encoding: 'base64' });
+            res = await job.apiClient.post('/share', {
+              ...envelope,
+              payload: {
+                text: carryText ? (job.text || undefined) : undefined,
+                url: carryText ? (job.url || undefined) : undefined,
+                images: [{ filename: img.filename, mimeType: img.mimeType, dataBase64 }],
+              },
+            });
+            dataBase64 = null; // release the base64 string ASAP for GC
+          }
           if (!ownsJob(job)) return;
-          dataBase64 = null; // release the base64 string ASAP for GC
           // Require the persisted-row ECHO, not just success — the server used
           // to return success even when the media insert failed, and marking
           // `sent` on that is silent photo loss with no retry.
