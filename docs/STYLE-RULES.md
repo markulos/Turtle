@@ -76,8 +76,9 @@ repo skill (loaded before any UI work) and by review.
 - Keyboard-aware sheets: no KeyboardAvoidingView. The sheet listens to the keyboard and — ONLY IF the
   keyboard would COVER the field it opened for (measure the field, compare with the keyboard's top) —
   jumps to EXPANDED, lifts by the keyboard height on a native-driver transform and caps its height below
-  the status bar. If the field is already clear of the keyboard, NOTHING on screen changes size or place;
-  the body just gains bottom padding so what sits under the keyboard stays reachable. Drops back when
+  the status bar. If the field is already clear of the keyboard, the card does NOT lift and its height is
+  not capped — it only rises to its expanded detent (so the content under the field gets the room above
+  the keyboard) and the body gains bottom padding so what sits under the keyboard stays reachable. Drops back when
   the keyboard goes. Search / add fields go at the TOP of a sheet (`PhotoViewer/ViewerSheet` does all this).
 - Keyboard + a scrolling list (the chat): the list keeps scrolling with the keyboard up
   (`keyboardDismissMode="none"`); the keyboard closes on a SWIFT pull DOWN (≥ 48 pt at ≥ 1.2 pt/ms) or a

@@ -162,7 +162,10 @@ export default function ViewerSheet({
         expand();
         Animated.timing(lift, { toValue: -h, duration: ms, easing: Easing.bezier(0.38, 0.7, 0.125, 1), useNativeDriver: true }).start();
       };
-      const stayPut = () => { setKb(h); setLifted(false); };
+      // Not covered: no lift, no height cap — but the card still RISES to its
+      // expanded detent so the content under the field (the tag chips) has the
+      // room above the keyboard instead of sitting under it.
+      const stayPut = () => { setKb(h); setLifted(false); expand(); };
       const node = topBarRef.current;
       if (!node || typeof node.measureInWindow !== 'function') { moveUp(); return; }
       node.measureInWindow((x, y, w, hh) => {
