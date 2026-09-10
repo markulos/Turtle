@@ -45,6 +45,7 @@ import AnimalAvatar from '../../components/AnimalAvatar';
 import TypingIndicator from '../../components/TypingIndicator';
 import { generatedName } from '../../utils/avatar';
 import { useCommandBus } from '../../context/CommandBusContext';
+import { useOpenTarget } from '../../context/OpenTargetContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { interceptAndSend } from '../../services/AICommandInterceptor';
 import { sendOrQueue } from '../../services/offlineQueue';
@@ -60,6 +61,7 @@ import TerminalConsole from './components/TerminalConsole';
 import FriendCard from './components/FriendCard';
 import EdgeSwipePage from './components/EdgeSwipePage';
 import ConversationsOverlay from './components/ConversationsOverlay';
+import GlobalSearchPage from './components/GlobalSearchPage';
 import ChatComposer from '../../components/ChatComposer';
 import LinkDesktop from './components/LinkDesktop';
 // SettingsScreen used to be its own tab. We surface it from inside
@@ -635,6 +637,31 @@ export default function TurtleScreen() {
   // from the forum icon next to Friends. Sibling of the Friends page (only one
   // of the two Modals is ever open at a time).
   const [showConversations, setShowConversations] = useState(false);
+  // Board to land on when the conversations inbox opens from a search hit.
+  const [conversationsBoard, setConversationsBoard] = useState(null);
+  // Global search (one box: boards, tasks, notes, photos) — the header's
+  // magnifier and the /search command open it; a hit is handed to the owning
+  // tab through the OpenTarget bus.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchSeed, setSearchSeed] = useState('');
+  const { open: openTarget } = useOpenTarget();
+  const openGlobalSearch = useCallback((seed = '') => {
+    setSearchSeed(seed);
+    setSearchOpen(true);
+  }, []);
+  const handleSearchOpen = useCallback((target) => {
+    setSearchOpen(false);
+    if (!target) return;
+    if (target.kind === 'board') {
+      setConversationsBoard(target.id);
+      setShowConversations(true);
+      return;
+    }
+    if (target.kind === 'media') setIsGalleryOpen(false); // the Photos tab's gallery takes it
+    openTarget(target);
+    const tab = target.kind === 'task' ? 'Tasks' : target.kind === 'note' ? 'Notes' : 'Photos';
+    navigation.navigate(tab);
+  }, [openTarget, navigation]);
   // "Link a desktop" QR scanner (approve a Turtle desktop app to sign in as you).
   const [showLinkDesktop, setShowLinkDesktop] = useState(false);
   const [friends, setFriends] = useState([]);
@@ -1342,11 +1369,14 @@ export default function TurtleScreen() {
       return; // STOP HERE - don't send to AI
     }
 
-    // Check for local /search command (don't send to AI)
+    // /search <text> — the global search page, seeded with the text (typing
+    // it still filters the transcript live; sending it searches everything).
     if (currentInput.toLowerCase().startsWith('/search')) {
+      const seed = currentInput.slice(7).trim();
       setInputText('');
       Keyboard.dismiss();
-      return; 
+      openGlobalSearch(seed);
+      return;
     }
 
     // Check for /pomodoro commands
@@ -1973,6 +2003,20 @@ export default function TurtleScreen() {
             tintColor={theme.colors.textTertiary}
           />
         </TouchableOpacity>
+        {/* Search everything — a sibling of the identity bar in the same
+            60pt row, so the header's height is untouched. */}
+        <TouchableOpacity
+          onPressIn={() => tapHaptic()}
+          onPress={() => openGlobalSearch('')}
+          activeOpacity={0.6}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          style={styles.headerSearchButton}
+          accessibilityRole="button"
+          accessibilityLabel="Search everything"
+          testID="header-search"
+        >
+          <Icon name="magnify" size={24} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
       </Reanimated.View>
 
       {/* History failed to load — an inline strip under the header rather than
@@ -2397,9 +2441,17 @@ export default function TurtleScreen() {
       {/* Conversation boards — messenger inbox of per-board threads (list +
           board conversation with board-scoped Turtle AI). Sibling Modal of the
           Friends page; never open at the same time as it. */}
+      <GlobalSearchPage
+        visible={searchOpen}
+        initialQuery={searchSeed}
+        onClose={() => setSearchOpen(false)}
+        onOpen={handleSearchOpen}
+      />
+
       <ConversationsOverlay
         visible={showConversations}
-        onClose={() => setShowConversations(false)}
+        initialBoard={conversationsBoard}
+        onClose={() => { setShowConversations(false); setConversationsBoard(null); }}
         onOpenClaude={() => {
           // The dedicated "Claude" inbox entry → close the inbox + open the
           // Claude coding session in the main chat (reuses the existing
@@ -3132,6 +3184,13 @@ const createStyles = (theme, insets) =>
       paddingHorizontal: 4,
     },
     identityAvatarWrap: { width: 34, height: 34 },
+    headerSearchButton: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 4,
+    },
     // Accent ring around the avatar, matching the profile card's treatment.
     identityAvatarRing: {
       width: 34, height: 34, borderRadius: 17,

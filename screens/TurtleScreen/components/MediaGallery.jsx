@@ -92,6 +92,7 @@ const getRNShare = () => {
 // which triggered an `import/first` warning on every Fast Refresh and
 // was the recurring console noise the user was seeing. Consolidated here.
 import { useServer } from '../../../context/ServerContext';
+import { useOpenTarget } from '../../../context/OpenTargetContext';
 import { FlashList } from '@shopify/flash-list';
 import Reanimated, {
   useSharedValue,
@@ -2367,6 +2368,18 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
 
   // PhotoViewer has finished its close animation: drop the viewer state. The
   // Modal hides on the next render.
+  // A photo handed over from elsewhere (global search): open the viewer on
+  // it. openViewer indexes into the loaded set and falls back to a solo page
+  // when the photo is not loaded here, so any hit opens.
+  const { pending: pendingTarget, clear: clearTarget } = useOpenTarget();
+  useEffect(() => {
+    if (!pendingTarget || pendingTarget.kind !== 'media' || !pendingTarget.item) return;
+    const item = pendingTarget.item;
+    clearTarget();
+    openViewer(item, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTarget]);
+
   const handleViewerClosed = useCallback(() => {
     gestureProbe.respond('viewer:close');
     setSelectedMedia(null);

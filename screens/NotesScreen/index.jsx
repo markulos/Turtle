@@ -77,6 +77,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../context/ThemeContext';
 import { useServer } from '../../context/ServerContext';
+import { useOpenTarget } from '../../context/OpenTargetContext';
 import { useClaudeQueue } from '../../context/ClaudeQueueContext';
 import { keyboardScrollProps } from '../../components/KeyboardSafeView';
 import { TAP_ONLY } from '../../utils/pressBehavior';
@@ -534,6 +535,17 @@ export default function NotesScreen() {
     setEditingNote(note);
     setComposerOpen(true);
   }, []);
+
+  // A note handed over from elsewhere (global search) opens in the composer
+  // exactly as a tap here would; the loaded row wins over the handed hit.
+  const { pending: pendingTarget, clear: clearTarget } = useOpenTarget();
+  useEffect(() => {
+    if (!pendingTarget || pendingTarget.kind !== 'note') return;
+    const found = (notes || []).find((n) => n && n.id === pendingTarget.id);
+    clearTarget();
+    openEditNote(found || pendingTarget.item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTarget]);
 
   // Long-press menu: choose to Edit or Delete the note/todo.
   const showNoteActions = (note) => {
