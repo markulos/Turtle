@@ -42,6 +42,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useServer } from '../../context/ServerContext';
 import { useAuth } from '../../context/AuthContext';
 import AnimalAvatar from '../../components/AnimalAvatar';
+import TypingIndicator from '../../components/TypingIndicator';
 import { generatedName } from '../../utils/avatar';
 import { useCommandBus } from '../../context/CommandBusContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -2488,7 +2489,7 @@ export default function TurtleScreen() {
         ListFooterComponent={
           isLoading ? (
             <View style={styles.loadingBubble}>
-              <Text style={styles.loadingText}>Turtle is typing...</Text>
+              <TypingIndicator theme={theme} />
             </View>
           ) : null
         }
@@ -3548,13 +3549,9 @@ const createStyles = (theme, insets) =>
     },
     loadingBubble: {
       alignSelf: 'flex-start',
-      padding: theme.spacing.md,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.xs,
       marginBottom: theme.spacing.sm,
-    },
-    loadingText: {
-      fontSize: 14,
-      color: theme.colors.textMuted,
-      fontStyle: 'italic',
     },
     claudeQueueBanner: {
       flexDirection: 'row',
