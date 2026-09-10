@@ -199,11 +199,11 @@ export default function UpdatesPanel() {
     <View style={styles.wrap} accessibilityLabel="App version and updates">
       <View style={styles.header}>
         <Icon name="update" size={18} color={c.accentInfo} />
-        <Text style={styles.title}>App version & updates</Text>
+        <Text style={styles.title} numberOfLines={1}>App version & updates</Text>
         <View style={{ flex: 1 }} />
         {pill.text ? (
           <View style={[styles.pill, { borderColor: pill.color }]}>
-            <Text style={[styles.pillText, { color: pill.color }]}>{pill.text}</Text>
+            <Text style={[styles.pillText, { color: pill.color }]} numberOfLines={1}>{pill.text}</Text>
           </View>
         ) : null}
       </View>
@@ -328,12 +328,15 @@ const makeStyles = (theme) => {
       marginBottom: 12,
       gap: 6,
     },
-    header: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
-    title: { fontSize: 15, fontWeight: '600', color: c.textPrimary },
+    // The header WRAPS and its title SHRINKS: title + spacer + the state pill on
+    // one rigid line pushed "UPDATE AVAILABLE" past the card on a 375pt screen.
+    header: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 4 },
+    title: { fontSize: 15, fontWeight: '600', color: c.textPrimary, flexShrink: 1 },
     pill: {
       borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2,
+      flexShrink: 1, maxWidth: '100%',
     },
-    pillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.6 },
+    pillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.6, flexShrink: 1 },
     buildTitle: { fontSize: 14, fontWeight: '600', color: c.textPrimary },
     buildDetail: { fontSize: 12, color: c.textSecondary, lineHeight: 17 },
     facts: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 4 },
@@ -364,6 +367,6 @@ const makeStyles = (theme) => {
     releaseName: { width: 78, color: c.textSecondary },
     releaseHead: { flex: 1, fontSize: 12, color: c.textPrimary },
     switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 },
-    switchLabel: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
+    switchLabel: { fontSize: 13, fontWeight: '600', color: c.textPrimary, flexShrink: 1 },
   });
 };
