@@ -51,6 +51,8 @@ import { buildBucketsUrl, buildGalleryUrl } from '../../../utils/galleryFilters'
 import DevProfiler from '../../../components/DevProfiler';
 import { useGalleryFilters } from '../../../utils/useGalleryFilters';
 import GalleryFilterSheet from './GalleryFilterSheet';
+import TagsSheet from './PhotoViewer/TagsSheet';
+import { GridItem, ShimmerSkeleton, GRID_VIDEO_PREVIEW } from './PhotoGrid/GridCell';
 // Public capability links for one item — the "send a link that plays in the
 // chat" half of the share sheet. See services/mediaShareLinks.js for why a
 // video's link has to wait on a conversion before it can be handed out.
@@ -129,7 +131,6 @@ const AnimatedFlashList = Animated.createAnimatedComponent(FlashList);
 
 // Master kill-switch for the Instagram-style grid video autoplay preview.
 // Flip to false to fully disable (cells fall back to the static thumbnail).
-const GRID_VIDEO_PREVIEW = true;
 // "Jump to latest" pill: how long after scrolling STOPS before it fades away on
 // its own (a motionless grid sheds the pill). Kept short — a "very brief" idle.
 const GRID_JUMP_IDLE_MS = 1500;
@@ -187,12 +188,6 @@ const slotAt = (i) => SLOT_CACHE[i] || (SLOT_CACHE[i] = { id: `vskel-${i}`, isSk
 
 // Format seconds to MM:SS (null when no duration). Module-level so the video
 // cell + the detail view share one copy.
-const formatDuration = (seconds) => {
-  if (!seconds) return null;
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s < 10 ? '0' : ''}${s}`;
-};
 
 const { width, height } = Dimensions.get('window');
 // The vault is deliberately haptic-free: touch feedback on the grid, the
@@ -551,6 +546,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     reset: resetFilters,
     chips: filterChips,
     isDirty: filtersDirty,
+    hydrated: filtersHydrated,
   } = useGalleryFilters();
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
   const [filterSheetFocusSearch, setFilterSheetFocusSearch] = useState(false);
@@ -1032,133 +1028,8 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     setRangeSelectMode(prev => !prev);
   }, []);
 
-  const [isBulkTagging, setIsBulkTagging] = useState(false);
-
-  const executeBulkTagSave = useCallback((uiTagsOverride) => {
-    try {
-      // 1. What tags are CURRENTLY sitting in the UI input box? (Caller may pass
-      // the already-resolved set so this doesn't depend on closure state after
-      // the editor has been closed.)
-      let currentUiTags = Array.isArray(uiTagsOverride)
-        ? [...uiTagsOverride]
-        : (() => { const t = [...editingTags]; if (tagInputValue.trim()) t.push(tagInputValue.trim()); return t; })();
-      currentUiTags = Array.from(new Set(currentUiTags));
-
-      // Resolve selected items against the FULL displayed set (loaded prefix +
-      // sparse virtual-library pages), NOT just `uploadItems` (the prefix).
-      // Without this, photos selected from deep in the timeline aren't found,
-      // so the common-tags + add/remove math silently ignore them — the core
-      // "tagging is broken/finicky for a big library" bug.
-      const displayItems = uploadItemsForDragRef.current || [];
-      const byId = new Map();
-      for (const di of displayItems) if (di && di.id && !di.isSkeleton) byId.set(di.id, di);
-      // Apply a tag map (id → tags JSON) onto items that live ONLY in the
-      // sparse virtual-library cache, so an optimistic bulk update is reflected
-      // for off-screen selections too (the prefix is handled by setUploadItems).
-      const patchSparse = (tagsById) => {
-        const m = sparsePagesRef.current;
-        if (!m || m.size === 0) return;
-        let touched = false;
-        for (const [pageIdx, arr] of m) {
-          if (!Array.isArray(arr)) continue;
-          let pageTouched = false;
-          const next = arr.map(it => {
-            if (it && it.id && tagsById[it.id] != null) { pageTouched = true; return { ...it, tags: tagsById[it.id] }; }
-            return it;
-          });
-          if (pageTouched) { m.set(pageIdx, next); touched = true; }
-        }
-        if (touched) setSparseVersion(v => v + 1);
-      };
-
-      // 2. What were the ORIGINAL common tags before the user started typing?
-      let originalCommonTags = null;
-      Array.from(selectedGridItems).forEach(id => {
-        const item = byId.get(id);
-        if (item) {
-          const itemTags = tagsOf(item);
-          if (originalCommonTags === null) {
-            originalCommonTags = [...itemTags];
-          } else {
-            originalCommonTags = originalCommonTags.filter(t => itemTags.includes(t));
-          }
-        }
-      });
-      originalCommonTags = originalCommonTags || [];
-
-      // 3. Determine exact user intent
-      // Tags they typed in that weren't there originally
-      const explicitAdditions = currentUiTags.filter(t => !originalCommonTags.includes(t));
-      // Original tags they clicked the 'X' on to delete
-      const explicitRemovals = originalCommonTags.filter(t => !currentUiTags.includes(t));
-
-      // 4. Compute each item's final tag set locally (non-destructive: ONLY add
-      // what's new, ONLY remove what was explicitly X'd out) — then ship the
-      // whole batch as ONE request. The old path issued a PUT per item, so
-      // tagging 200 selected photos meant 200 parallel HTTP round-trips; the
-      // bulk route applies the same add/remove semantics in a single SQLite
-      // transaction.
-      const ids = Array.from(selectedGridItems);
-      const finalById = {};
-      ids.forEach(id => {
-        const targetItem = byId.get(id);
-        if (!targetItem) return;
-        let safeTags = [...tagsOf(targetItem)];
-        explicitAdditions.forEach(t => { if (!safeTags.includes(t)) safeTags.push(t); });
-        safeTags = safeTags.filter(t => !explicitRemovals.includes(t));
-        finalById[id] = safeTags;
-      });
-
-      // 5. OPTIMISTIC: apply the grid update + exit select mode INSTANTLY, with
-      // a snapshot kept for rollback. The network write happens afterwards in
-      // the background so the UI never waits on it.
-      const updatesMap = {};
-      const snapshot = {};
-      Object.entries(finalById).forEach(([id, tags]) => { updatesMap[id] = JSON.stringify(tags); });
-      ids.forEach(id => { const it = byId.get(id); if (it) snapshot[id] = it.tags || '[]'; });
-
-      setUploadItems(prevList => prevList.map(item =>
-        updatesMap[item.id] ? { ...item, tags: updatesMap[item.id] } : item
-      ));
-      patchSparse(updatesMap);
-      if (explicitAdditions.length > 0) {
-        setGlobalAlbums(prev => Array.from(new Set([...prev, ...explicitAdditions])).sort());
-      }
-      setIsSelectMode(false);
-      setIsBulkTagging(false);
-      setSelectedGridItems(new Set());
-
-      // 6. Persist in the background. Bulk route first; fall back to per-item
-      // PUTs if the server doesn't have it. Revert the grid only if EVERYTHING
-      // fails (the optimistic state already mirrors the intended result).
-      (async () => {
-        try {
-          // Through the outbox: offline, the bulk write is parked and replays
-          // on reconnect; the grid keeps the optimistic tags.
-          const r = await sendOrQueue(api, { method: 'put', path: '/media/tags/bulk', body: { ids, add: explicitAdditions, remove: explicitRemovals }, label: 'bulk tags' });
-          if (!r.queued && (!r.result || !r.result.success)) throw new Error(r.result?.error || 'bulk tag route unavailable');
-        } catch (e) {
-          try {
-            const entries = Object.entries(finalById);
-            for (let i = 0; i < entries.length; i += 6) {
-              await Promise.all(entries.slice(i, i + 6).map(([id, tags]) =>
-                sendOrQueue(api, { method: 'put', path: `/media/${id}/tags`, body: { tags }, key: `tags:${id}`, label: 'tags' })
-              ));
-            }
-          } catch (e2) {
-            console.error('[MediaGallery] Bulk tag save failed, reverting:', e2?.message);
-            setUploadItems(prevList => prevList.map(item =>
-              snapshot[item.id] != null ? { ...item, tags: snapshot[item.id] } : item
-            ));
-            patchSparse(snapshot);
-            Alert.alert('Tags not saved', 'The bulk tag update failed and was reverted.');
-          }
-        }
-      })();
-    } catch(e) {
-      Alert.alert('Error', `Failed to update tags: ${e.message}`);
-    }
-  }, [editingTags, tagInputValue, selectedGridItems, uploadItems, api]);
+  // (The selection bar's tag editor is the viewer's TagsSheet now — see
+  // openBulkTags / changeBulkTags further down, next to commitTags.)
 
   
   // Progress/percentage/minimize/delete-offer UI all moved to the global
@@ -1175,10 +1046,8 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vaultLifecycle.finishedAt]);
 
-  // === BULK TAG EDITOR STATE (selection bar) ===
-  // The viewer's own tags live in PhotoViewer's TagsSheet; these back the
-  // select-mode inline editor only.
-  const [editingTags, setEditingTags] = useState([]);
+  // The pre-upload album picker's inline tag input (the selection bar and the
+  // viewer both use the TagsSheet instead).
   const [tagInputValue, setTagInputValue] = useState('');
 
   // === REFS ===
@@ -1771,7 +1640,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   // Album / search / sort-basis context change → the sparse cache describes
   // a different result set (or a different ORDER BY); drop it AND orphan any
   // in-flight page fetches (epoch bump) so they can't repopulate it.
+  const sparseResetFirstRun = useRef(true);
   useEffect(() => {
+    // Nothing is cached at mount; bumping the version here only bought an
+    // extra full render before the first paint.
+    if (sparseResetFirstRun.current) { sparseResetFirstRun.current = false; return; }
     sparseEpochRef.current += 1;
     sparsePagesRef.current.clear();
     sparseInflightRef.current.clear();
@@ -2172,9 +2045,30 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   // deliberately excludes the search query: queries are served by the
   // debounced FTS overlay above, and cold-reloading the browse grid on every
   // keystroke would throw away the user's scroll position for nothing.
-  const filterFirstRun = useRef(true);
+  // COLD START: one effect owns both the first load and every filter change.
+  //   • It waits for the stored filter preferences (useGalleryFilters hydrates
+  //     from AsyncStorage a frame after mount). Firing with the defaults and
+  //     again with the stored sort was the double cold reload.
+  //   • `loading` clears when the GRID's own page lands — not when the
+  //     slowest of gallery + albums + buckets does. Albums and buckets feed
+  //     the boards and the scrubber; they land in their own time.
+  const loadedSignatureRef = useRef(null);
   useEffect(() => {
-    if (filterFirstRun.current) { filterFirstRun.current = false; return; }
+    if (!filtersHydrated) return undefined;
+    if (loadedSignatureRef.current === filterSignature) return undefined;
+    const first = loadedSignatureRef.current === null;
+    loadedSignatureRef.current = filterSignature;
+    if (first) {
+      setLoading(true);
+      fetchUploads(true).finally(() => setLoading(false));
+      fetchAlbums();
+      fetchBuckets();
+      if (autoUpload) {
+        const timer = setTimeout(() => { handleUpload(); }, 500);
+        return () => clearTimeout(timer);
+      }
+      return undefined;
+    }
     galleryEpochRef.current += 1;
     // The sparse/virtual cache is keyed by page index against one ordering —
     // a filter change invalidates every page it holds.
@@ -2184,9 +2078,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     // Drop the old month frame so the scrubber doesn't show stale months until
     // fetchBuckets() returns the new timeline.
     setUploadTimeline({ months: [], total: 0 });
-    Promise.all([fetchUploads(true), fetchBuckets()]).finally(() => setLoading(false));
+    fetchUploads(true).finally(() => setLoading(false));
+    fetchBuckets();
+    return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterSignature]);
+  }, [filtersHydrated, filterSignature]);
 
   // === API CALLS ===
   // Fetch uploads from database with strict deduplication
@@ -2330,21 +2226,8 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     // debounce timer never runs a stale-filter closure.
   }, [api, selectedAlbum, kind]);
 
-  // Initial load - Fetch EVERYTHING simultaneously to prepare the off-screen slider pages
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      fetchUploads(true),
-      fetchAlbums(),
-      fetchBuckets()
-    ]).finally(() => setLoading(false));
-    
-    if (autoUpload) {
-      const timer = setTimeout(() => { handleUpload(); }, 500);
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoUpload]); // <-- STRIPPED DEPS TO PREVENT RESET LOOPS
+  // (The initial load lives in the hydration-gated effect above, with the
+  // filter-change reload — one path, one first fetch.)
   
   // Fetch global albums
   const fetchAlbums = useCallback(async () => {
@@ -2489,6 +2372,11 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     setSelectedMedia(null);
     setViewerSoloItem(null);
     setViewerOrigin(null);
+    if (pendingAlbumDropRef.current.size) {
+      const drop = new Set(pendingAlbumDropRef.current);
+      pendingAlbumDropRef.current.clear();
+      setUploadItems((list) => list.filter((it) => !drop.has(it.id)));
+    }
   }, []);
 
   // The viewer settled on a page (finger up, animation done): adopt it as the
@@ -2804,87 +2692,218 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     );
   }, [api, activeTab]);
 
-  // Commit ONE photo's tags OPTIMISTICALLY: update local state instantly,
-  // persist to the server in the BACKGROUND, and roll back only if the write
-  // fails. The UI must NEVER block on the round-trip — this is the app-wide
-  // pattern for every mutation (see the optimistic-by-default principle).
+  // ── Tags: ONE local applier for every path (viewer sheet, heart, bulk) ──
+  //
+  // Before this, the viewer's sheet and the heart patched the loaded prefix
+  // (`uploadItems`) only. A photo opened from deep in the timeline lives in a
+  // SPARSE page, so its optimistic tags never reached the array the viewer
+  // walks: the chips did not move, the heart flipped on stale tags (so the
+  // second tap "re-added" instead of removing), and the Favourites board's
+  // count stayed put. Every write now goes through applyTagsLocally, which
+  // touches all of it: the open photo, the prefix, the sparse pages, the
+  // album list and the album counts.
+
+  const displayById = useCallback(() => {
+    const byId = new Map();
+    for (const it of uploadItemsForDragRef.current || []) if (it && it.id && !it.isSkeleton) byId.set(it.id, it);
+    return byId;
+  }, []);
+
+  // Photos that no longer carry the OPEN album leave its grid — but not out
+  // from under the viewer (the pager would jump to a neighbour). They go when
+  // the viewer closes.
+  const pendingAlbumDropRef = useRef(new Set());
+  // (selectedAlbumRef: the existing render-synced mirror, declared with the sparse loader.)
+
+  const patchSparseTags = useCallback((tagsById) => {
+    const m = sparsePagesRef.current;
+    if (!m || m.size === 0) return;
+    let touched = false;
+    for (const [pageIdx, arr] of m) {
+      if (!Array.isArray(arr)) continue;
+      let pageTouched = false;
+      const next = arr.map((it) => {
+        if (it && it.id && tagsById[it.id] != null && it.tags !== tagsById[it.id]) { pageTouched = true; return { ...it, tags: tagsById[it.id] }; }
+        return it;
+      });
+      if (pageTouched) { m.set(pageIdx, next); touched = true; }
+    }
+    if (touched) setSparseVersion((v) => v + 1);
+  }, []);
+
+  /** { mediaId: string[] } → every local copy of those photos carries those tags. */
+  const applyTagsLocally = useCallback((tagsById) => {
+    const byId = displayById();
+    const strById = {};
+    const albumDelta = {};
+    const newAlbums = [];
+    const album = selectedAlbumRef.current;
+    for (const [id, raw] of Object.entries(tagsById)) {
+      const clean = Array.from(new Set((raw || []).filter((t) => typeof t === 'string' && t.trim()).map((t) => t.trim())));
+      strById[id] = JSON.stringify(clean);
+      const prev = byId.get(id);
+      const before = prev ? tagsOf(prev) : [];
+      for (const t of clean) if (!before.includes(t)) { albumDelta[t] = (albumDelta[t] || 0) + 1; newAlbums.push(t); }
+      for (const t of before) if (!clean.includes(t)) albumDelta[t] = (albumDelta[t] || 0) - 1;
+      if (album !== 'All' && before.includes(album) && !clean.includes(album)) pendingAlbumDropRef.current.add(id);
+      else if (album !== 'All' && clean.includes(album)) pendingAlbumDropRef.current.delete(id);
+    }
+    setSelectedMedia((prev) => (prev && strById[prev.id] != null && prev.tags !== strById[prev.id] ? { ...prev, tags: strById[prev.id] } : prev));
+    setUploadItems((list) => {
+      let changed = false;
+      const next = list.map((it) => {
+        if (it && strById[it.id] != null && it.tags !== strById[it.id]) { changed = true; return { ...it, tags: strById[it.id] }; }
+        return it;
+      });
+      return changed ? next : list;
+    });
+    patchSparseTags(strById);
+    if (newAlbums.length) {
+      setGlobalAlbums((prev) => {
+        const set = new Set(prev);
+        let changed = false;
+        for (const t of newAlbums) if (!set.has(t)) { set.add(t); changed = true; }
+        return changed ? Array.from(set).sort() : prev;
+      });
+    }
+    const deltas = Object.entries(albumDelta).filter(([, d]) => d !== 0);
+    if (deltas.length) {
+      setAlbumCounts((prev) => {
+        const next = { ...prev };
+        for (const [t, d] of deltas) next[t] = Math.max(0, (next[t] || 0) + d);
+        return next;
+      });
+    }
+    // Not looking through the viewer → the album grid can shed them now.
+    if (album !== 'All' && !viewerActiveStore.get() && pendingAlbumDropRef.current.size) {
+      const drop = new Set(pendingAlbumDropRef.current);
+      pendingAlbumDropRef.current.clear();
+      setUploadItems((list) => list.filter((it) => !drop.has(it.id)));
+    }
+  }, [displayById, patchSparseTags, viewerActiveStore]);
+
+  // Commit ONE photo's tags OPTIMISTICALLY: local state instantly, the PUT in
+  // the background through the outbox (offline → parked, the tags stand),
+  // rolled back only on a permanent rejection.
   const commitTags = useCallback((mediaId, finalTags) => {
     if (!mediaId) return;
     const tags = Array.from(new Set(finalTags));
-    const newTagsString = JSON.stringify(tags);
-    // Snapshot prior tags so a failed write can be rolled back.
-    // Resolve against the full displayed set (loaded prefix + sparse
-    // virtual-library pages), not just the prefix, so tagging a photo opened
-    // from deep in the timeline snapshots the right rollback baseline instead
-    // of treating it as untagged.
-    const prevItem = (uploadItemsForDragRef.current || []).find(it => it && it.id === mediaId);
-    const prevTagsString = prevItem ? (prevItem.tags || '[]') : '[]';
-
-    // 1. Instant local update — viewer item, grid item, and the album list.
-    setSelectedMedia(prev => (prev && prev.id === mediaId ? { ...prev, tags: newTagsString } : prev));
-    setUploadItems(prevList => {
-      // Viewing a single album and the photo no longer carries it → drop it.
-      if (selectedAlbum !== 'All' && !tags.includes(selectedAlbum)) {
-        return prevList.filter(item => item.id !== mediaId);
-      }
-      return prevList.map(item => item.id === mediaId ? { ...item, tags: newTagsString } : item);
-    });
-    setGlobalAlbums(prev => Array.from(new Set([...prev, ...tags])).sort());
-
-    // 2. Persist in the background THROUGH THE OUTBOX: offline, the write is
-    // parked (key per photo, so repeated edits collapse to the last) and the
-    // optimistic tags stand; only a permanent rejection reverts.
+    const prevItem = displayById().get(mediaId);
+    const before = prevItem ? tagsOf(prevItem) : (selectedMedia && selectedMedia.id === mediaId ? tagsOf(selectedMedia) : []);
+    applyTagsLocally({ [mediaId]: tags });
     sendOrQueue(api, { method: 'put', path: `/media/${mediaId}/tags`, body: { tags }, key: `tags:${mediaId}`, label: 'tags' })
-      .then(r => { if (!r.queued && (!r.result || !r.result.success)) throw new Error(r.result?.error || 'rejected'); })
-      .catch(err => {
+      .then((r) => { if (!r.queued && (!r.result || !r.result.success)) throw new Error(r.result?.error || 'rejected'); })
+      .catch((err) => {
         console.error('[MediaGallery] Tag save failed, reverting:', err?.message);
-        setSelectedMedia(prev => (prev && prev.id === mediaId ? { ...prev, tags: prevTagsString } : prev));
-        setUploadItems(prevList => prevList.map(item => item.id === mediaId ? { ...item, tags: prevTagsString } : item));
+        applyTagsLocally({ [mediaId]: before });
         Alert.alert('Tags not saved', 'That change could not be saved and was reverted.');
       });
-  }, [api, selectedAlbum, uploadItems, setSelectedMedia, setUploadItems, setGlobalAlbums]);
+  }, [api, selectedMedia, displayById, applyTagsLocally]);
 
-
-  // Optimistic UI toggle for Quick Favourites. Takes the item explicitly (the
-  // viewer hands over its active page; a bare button press hands an event,
-  // which is ignored) and falls back to the selected photo.
-  const toggleFavourite = useCallback(async (target) => {
+  // The heart. Reads the photo's CURRENT tags from the gallery's own data (the
+  // viewer hands over the page it holds, which may be a render behind), flips
+  // Favourites, and commits through the same path as any other tag edit.
+  const toggleFavourite = useCallback((target) => {
     gestureProbe.respond('viewer:favourite');
-    const item = target && target.id ? target : selectedMedia;
-    if (!item) return;
+    const handed = target && target.id ? target : selectedMedia;
+    if (!handed) return;
+    const live = displayById().get(handed.id) || handed;
+    const current = tagsOf(live);
+    const next = current.includes('Favourites')
+      ? current.filter((t) => t !== 'Favourites')
+      : [...current, 'Favourites'];
+    applyTagsLocally({ [handed.id]: next });
+    sendOrQueue(api, { method: 'put', path: `/media/${handed.id}/tags`, body: { tags: next }, key: `tags:${handed.id}`, label: 'favourite' })
+      .then((r) => { if (!r.queued && (!r.result || !r.result.success)) throw new Error(r.result?.error || 'rejected'); })
+      .catch((err) => {
+        console.error('[MediaGallery] Favourites toggle failed, reverting:', err?.message);
+        applyTagsLocally({ [handed.id]: current });
+      });
+  }, [api, selectedMedia, displayById, applyTagsLocally]);
 
-    try {
-      const currentTags = JSON.parse(item.tags || '[]');
-      const isFav = currentTags.includes('Favourites');
-      const newTags = isFav
-        ? currentTags.filter(t => t !== 'Favourites')
-        : [...currentTags, 'Favourites'];
-      const newTagsString = JSON.stringify(newTags);
+  // ── Bulk tags: the selection bar's "Tag" opens the SAME sheet ──────────
+  // The sheet shows the tags every selected photo shares; each chip tap is a
+  // whole-selection add or remove (non-destructive: a photo's other tags are
+  // never touched), applied locally at once and sent as ONE bulk PUT.
+  const [bulkTagsOpen, setBulkTagsOpen] = useState(false);
+  const [bulkCommonTags, setBulkCommonTags] = useState([]);
+  const bulkCommonTagsRef = useRef([]);
+  bulkCommonTagsRef.current = bulkCommonTags;
+  const bulkIdsRef = useRef([]);
+  const bulkDirtyRef = useRef(false);
 
-      // 1. Optimistically update the UI instantly — the viewer item, the grid
-      // item, and the album list.
-      setSelectedMedia(prev => (prev && prev.id === item.id ? { ...prev, tags: newTagsString } : prev));
-      setUploadItems(prevList => prevList.map(it => it.id === item.id ? { ...it, tags: newTagsString } : it));
-      if (!isFav) {
-        setGlobalAlbums(prev => Array.from(new Set([...prev, 'Favourites'])).sort());
-      }
-
-      // 2. Persist in the background (the handler only reads `tags`) through
-      // the outbox — same key as commitTags, so a favourite toggle and a tag
-      // edit on one photo collapse to the last write.
-      await sendOrQueue(api, { method: 'put', path: `/media/${item.id}/tags`, body: { tags: newTags }, key: `tags:${item.id}`, label: 'favourite' });
-
-      // 3. NO full-library refetch — the optimistic updates above already
-      // mirror the server state. The one case that needs more is
-      // un-favouriting while looking at the Favourites album: the item should
-      // leave the grid.
-      if (selectedAlbum === 'Favourites' && isFav) {
-        setUploadItems(prev => prev.filter(it => it.id !== item.id));
-      }
-    } catch (e) {
-      console.error('[MediaGallery] Favourites toggle failed:', e);
+  const openBulkTags = useCallback(() => {
+    const ids = Array.from(selectedGridItemsRef.current || []);
+    if (ids.length === 0) return;
+    const byId = displayById();
+    let common = null;
+    for (const id of ids) {
+      const it = byId.get(id);
+      if (!it) continue;
+      const t = tagsOf(it);
+      common = common === null ? [...t] : common.filter((x) => t.includes(x));
     }
-  }, [selectedMedia, api, selectedAlbum]);
+    bulkIdsRef.current = ids;
+    bulkDirtyRef.current = false;
+    setBulkCommonTags(common || []);
+    setBulkTagsOpen(true);
+  }, [displayById]);
+
+  const changeBulkTags = useCallback((next) => {
+    const prev = bulkCommonTagsRef.current;
+    const add = next.filter((t) => !prev.includes(t));
+    const remove = prev.filter((t) => !next.includes(t));
+    if (add.length === 0 && remove.length === 0) return;
+    setBulkCommonTags(next);
+    bulkDirtyRef.current = true;
+    const ids = bulkIdsRef.current;
+    const byId = displayById();
+    const tagsById = {};
+    const snapshot = {};
+    for (const id of ids) {
+      const it = byId.get(id);
+      if (!it) continue;
+      const before = tagsOf(it);
+      let t = [...before];
+      for (const a of add) if (!t.includes(a)) t.push(a);
+      if (remove.length) t = t.filter((x) => !remove.includes(x));
+      tagsById[id] = t;
+      snapshot[id] = before;
+    }
+    applyTagsLocally(tagsById);
+    (async () => {
+      try {
+        const r = await sendOrQueue(api, { method: 'put', path: '/media/tags/bulk', body: { ids, add, remove }, label: 'bulk tags' });
+        if (!r.queued && (!r.result || !r.result.success)) throw new Error(r.result?.error || 'bulk tag route unavailable');
+      } catch (e) {
+        try {
+          const entries = Object.entries(tagsById);
+          for (let i = 0; i < entries.length; i += 6) {
+            await Promise.all(entries.slice(i, i + 6).map(([id, tags]) =>
+              sendOrQueue(api, { method: 'put', path: `/media/${id}/tags`, body: { tags }, key: `tags:${id}`, label: 'tags' })
+            ));
+          }
+        } catch (e2) {
+          console.error('[MediaGallery] Bulk tag save failed, reverting:', e2?.message);
+          applyTagsLocally(snapshot);
+          Alert.alert('Tags not saved', 'The bulk tag update failed and was reverted.');
+        }
+      }
+    })();
+  }, [api, displayById, applyTagsLocally]);
+
+  const closeBulkTags = useCallback(() => {
+    setBulkTagsOpen(false);
+    // Tags were changed → the job is done, leave select mode (as Save did).
+    // Nothing changed → the selection stays for the next action.
+    if (bulkDirtyRef.current) {
+      setIsSelectMode(false);
+      setSelectedGridItems(new Set());
+      setRangeSelectMode(false);
+      setRangeAnchorIdx(null);
+      rangeAnchorRef.current = null;
+    }
+  }, []);
 
   // Helper to construct a full MEDIA url. Built off the media origin (HTTP/2 when
   // the device can reach + trust :3443, probed in ServerContext; else the plain
@@ -3293,6 +3312,10 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
   //   • The lists pass `extraData={gridSelectionExtra}` so visible cells
   //     re-run when selection state changes; GridItem's memo then limits the
   //     actual re-renders to cells whose `isSelected` flipped.
+  const gridKeyExtractor = useCallback(
+    (item, index) => ((virtualEnabledRef.current || item.isSkeleton) ? `i${index}` : item.id),
+    [],
+  );
   const renderItem = useCallback(({ item, index }) => {
     // One path for slots AND loaded items — GridItem renders both shapes
     // (see its UNIFIED CELL note), so a resolving slot is a re-render of the
@@ -3737,7 +3760,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
           style={{ position: 'absolute', bottom: Math.max(insets.bottom + 24, tabBarH + 12), left: 16, right: 16, zIndex: 50 }}
           pointerEvents="box-none"
         >
-          {!isBulkTagging ? (
+          {(
             <View style={{ alignItems: 'center', gap: 10 }}>
             {/* Section Select toggle — tap first photo, tap last, fill between */}
             <TouchableOpacity
@@ -3932,24 +3955,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
               <TouchableOpacity 
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 8, opacity: selectedGridItems.size === 0 ? 0.5 : 1 }}
                 disabled={selectedGridItems.size === 0}
-                onPress={() => {
-                  // Calculate exact tag intersection across selected items
-                  let commonTags = null;
-                  const _disp = uploadItemsForDragRef.current || [];
-                  const _byId = new Map();
-                  for (const di of _disp) if (di && di.id && !di.isSkeleton) _byId.set(di.id, di);
-                  Array.from(selectedGridItems).forEach(id => {
-                    const item = _byId.get(id);
-                    if (item) {
-                      const itemTags = tagsOf(item);
-                      if (commonTags === null) commonTags = [...itemTags];
-                      else commonTags = commonTags.filter(t => itemTags.includes(t));
-                    }
-                  });
-                  setEditingTags(commonTags || []);
-                  setTagInputValue('');
-                  setIsBulkTagging(true);
-                }}
+                onPress={openBulkTags}
               >
                 <Icon name="tag-multiple" size={20} color={theme.colors.primary} />
                 <Text style={{ color: theme.colors.primary, fontWeight: 'bold', fontSize: 15 }}>
@@ -4027,86 +4033,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
               </TouchableOpacity>
             </Animated.View>
             </View>
-          ) : (
-            <Animated.View style={[styles.selectBezel, {
-              borderRadius: 20, padding: 16, width: '100%',
-            }]}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <TouchableOpacity onPress={() => setIsBulkTagging(false)}>
-                  <Icon name="close" size={24} color={theme.colors.textSecondary} />
-                </TouchableOpacity>
-                <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Tagging {selectedGridItems.size} Items</Text>
-                <TouchableOpacity onPress={executeBulkTagSave}>
-                  <Text style={{ color: theme.colors.primary, fontWeight: 'bold', fontSize: 16 }}>Save</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={[styles.chipInputContainer, { borderColor: theme.colors.border, minHeight: 44, marginBottom: 8 }]}>
-                {editingTags.map((tag, index) => (
-                  <View key={index} style={[styles.chip, { backgroundColor: theme.colors.primary, paddingVertical: 4 }]}>
-                    <Text style={styles.chipText}>{tag}</Text>
-                    <TouchableOpacity onPress={() => setEditingTags(prev => prev.filter((_, i) => i !== index))}>
-                      <Icon name="close-circle" size={16} color={theme.colors.background} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-                <TextInput
-                  style={[styles.chipTextInput, { color: theme.colors.textPrimary, paddingVertical: 0, margin: 0, height: 28 }]}
-                  value={tagInputValue}
-                  onChangeText={(text) => {
-                    if (text.includes(',')) {
-                      const newTags = text.split(',').map(t => t.trim()).filter(Boolean);
-                      if (newTags.length > 0) setEditingTags(prev => Array.from(new Set([...prev, ...newTags])));
-                      setTagInputValue('');
-                    } else { setTagInputValue(text); }
-                  }}
-                  onKeyPress={({ nativeEvent }) => {
-                    if (nativeEvent.key === 'Backspace' && tagInputValue === '' && editingTags.length > 0) {
-                      setEditingTags(prev => prev.slice(0, -1));
-                    }
-                  }}
-                  onSubmitEditing={() => {
-                    if (tagInputValue.trim()) {
-                      setEditingTags(prev => Array.from(new Set([...prev, tagInputValue.trim()])));
-                      setTagInputValue('');
-                    }
-                  }}
-                  placeholder={editingTags.length === 0 ? "Type tag..." : ""}
-                  placeholderTextColor={theme.colors.textMuted}
-                  returnKeyType="done"
-                  autoCapitalize="words"
-                />
-              </View>
-
-              {tagInputValue.length > 0 ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={styles.scrollHorizontal}>
-                  {globalAlbums.filter(a => a.toLowerCase().includes(tagInputValue.toLowerCase())).map(album => (
-                    <TouchableOpacity
-                      key={album} style={[styles.quickSelectChip, { borderWidth: 1, borderColor: theme.colors.border }]}
-                      onPress={() => {
-                        setEditingTags(prev => prev.includes(album) ? prev : [...prev, album]);
-                        setTagInputValue('');
-                      }}
-                    >
-                      <Text style={{ color: theme.colors.textPrimary }}>{album}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={styles.scrollHorizontal}>
-                  {pinnedAlbums.map(album => (
-                    <TouchableOpacity
-                      key={album} style={[styles.quickSelectChip, editingTags.includes(album) && { backgroundColor: theme.colors.primary }]}
-                      onPress={() => {
-                        setEditingTags(prev => prev.includes(album) ? prev.filter(t => t !== album) : [...prev, album]);
-                      }}
-                    >
-                      <Text style={[styles.quickSelectText, editingTags.includes(album) && { color: theme.colors.background }]}>{album}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
-            </Animated.View>
           )}
         </KeyboardAvoidingView>
       )}
@@ -4573,7 +4499,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
                 <TouchableOpacity
                   testID="gallery-select-toggle"
                   onPress={() => {
-                    if (isSelectMode) { setIsSelectMode(false); setIsBulkTagging(false); setSelectedGridItems(new Set()); setRangeSelectMode(false); setRangeAnchorIdx(null); rangeAnchorRef.current = null; }
+                    if (isSelectMode) { setIsSelectMode(false); setBulkTagsOpen(false); setSelectedGridItems(new Set()); setRangeSelectMode(false); setRangeAnchorIdx(null); rangeAnchorRef.current = null; }
                     else { setIsSelectMode(true); }
                   }}
                   hitSlop={HIT_SLOP_10}
@@ -4682,7 +4608,7 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
                 // (The old getItemType skel/thumb pool split is gone: it existed
                 // because the skeleton early-returned ABOVE GridItem's hooks —
                 // the unified cell has one unconditional shape, one pool.)
-                keyExtractor={(item, index) => ((virtualEnabledRef.current || item.isSkeleton) ? `i${index}` : item.id)}
+                keyExtractor={gridKeyExtractor}
                 numColumns={gridCols}
                 // Mount + start loading cells ~1.5 screens beyond the viewport so
                 // tiles resolve BEFORE they scroll into view (the iCloud feel),
@@ -4902,6 +4828,21 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
             onReset={resetFilters}
             onClose={() => { setIsFilterSheetOpen(false); setFilterSheetFocusSearch(false); }}
           />
+
+          {/* Bulk tags — the viewer's TagsSheet over the grid, for the whole
+              selection. In-tree like the filter sheet above. */}
+          {bulkTagsOpen && (
+            <TagsSheet
+              tags={bulkCommonTags}
+              suggestions={globalAlbums}
+              onChange={changeBulkTags}
+              onClose={closeBulkTags}
+              theme={theme}
+              title="Tags"
+              subtitle={`${bulkIdsRef.current.length} photo${bulkIdsRef.current.length === 1 ? '' : 's'} selected`}
+              bottomInset={Math.max(tabBarH, insets.bottom) + 12}
+            />
+          )}
         </View>
       </EdgeSwipePage>
       </View>
@@ -5098,359 +5039,6 @@ export default function MediaGallery({ onClose, autoUpload = false, kind = null 
     </DevProfiler>
   );
 }
-
-// Memoized grid item component for performance
-// === GRID ITEM COMPONENT (Memoized) ===
-// === PREMIUM SEAMLESS SWEEPING SHIMMER SKELETON ===
-const ShimmerSkeleton = React.memo(({ theme }) => {
-  const shimmerAnim = useRef(new Animated.Value(0)).current;
-
-  // Calculate dynamic size: Exact width divided by columns, no internal margins
-  // Ensure numColumns matches what is used in your FlatList (defaulting to 3 here)
-  const numColumns = 3; 
-  const tileSize = width / numColumns; 
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(shimmerAnim, {
-        toValue: 1,
-        duration: 1200,
-        useNativeDriver: true,
-      })
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [shimmerAnim]);
-
-  // Translate beam width needs to match the tileSize for full sweep coverage
-  const translateX = shimmerAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-tileSize, tileSize]
-  });
-
-  // Frosted glass base and light beam colors based on theme
-  const baseColor = theme.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)';
-  const shineColor = theme.mode === 'dark' ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)';
-
-  return (
-    <View style={{ 
-      width: tileSize, 
-      aspectRatio: 1, // Keep squares perfectly symmetrical
-      backgroundColor: baseColor, 
-      overflow: 'hidden',
-      margin: 0, // RIGIDLY enforce zero margin for seamless tiling
-      padding: 0, // Ensure no internal padding shifts the image
-    }}>
-      <Animated.View
-        style={[
-          StyleSheet.absoluteFillObject,
-          { transform: [{ translateX }] }
-        ]}
-      >
-        <LinearGradient
-          colors={['transparent', shineColor, 'transparent']}
-          start={{ x: 0, y: 0.5 }}
-          end={{ x: 1, y: 0.5 }}
-          style={StyleSheet.absoluteFillObject}
-        />
-      </Animated.View>
-    </View>
-  );
-});
-
-// Once-per-session guards for GridItem's self-healing fetches. Without these,
-// EVERY mount/recycle of an untagged cell fired /media/tags/sync (and every
-// duration-less video cell fired /media/duration) — scrolling a few thousand
-// untagged items hammered the server with thousands of requests and kept the
-// radio awake. One attempt per media id per app session is plenty for an
-// opportunistic background heal.
-const tagHealAttempted = new Set();
-const durationHealAttempted = new Set();
-
-// ── Grid video preview cell (Instagram-style) ────────────────────────
-// Mounted ONLY for the single centermost video once scrolling settles (see
-// GRID_VIDEO_PREVIEW + the viewability wiring in MediaGallery). Because it
-// mounts on exactly one cell at a time, only ONE expo-video decoder is ever
-// alive in the grid — muted, looping — so it stays cool. The static thumbnail
-// underneath remains as an instant poster; this fades over it and is wrapped
-// pointer-transparent so taps still open the viewer / toggle selection.
-// Unmounts (releasing the decoder) the instant the active id moves or the
-// user starts scrolling.
-const GridVideoPreview = ({ uri }) => {
-  // Fade the video up over its poster thumbnail (matches the photo crossfade
-  // aesthetic) so first-frame readiness never shows as a hard cut. Native
-  // driver → free; only ever one of these is mounted at a time.
-  const fade = useRef(new Animated.Value(0)).current;
-  const player = useVideoPlayer(uri, (p) => {
-    try {
-      p.loop = true;
-      p.muted = true;
-      // Silent autoplay preview: never claim the audio session, or scrolling
-      // the grid would stop the music player (expo-video's default 'auto'
-      // mixing mode takes the session even for a muted player).
-      p.audioMixingMode = 'mixWithOthers';
-      p.play();
-    } catch (_) {}
-  });
-  useEffect(() => {
-    const anim = Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true });
-    anim.start();
-    return () => anim.stop();
-  }, [fade]);
-  return (
-    <Animated.View style={[StyleSheet.absoluteFill, { opacity: fade }]} pointerEvents="none">
-      <VideoView
-        style={StyleSheet.absoluteFill}
-        player={player}
-        contentFit="cover"
-        nativeControls={false}
-      />
-    </Animated.View>
-  );
-};
-
-const GridItem = React.memo(({ item, openViewer, handleDelete, getFullUrl, getBaseUrl, activeTab, styles, theme, isSelectMode, isSelected, onToggleSelect, gridIndex, onTouchDown, isActiveVideo, cellSize, registerCell }) => {
-  // The cell's native view, for the viewer's open-from / fly-back-into-this-
-  // tile animation. Registered while mounted so the viewer can measure the
-  // cell of whichever photo it is closing on.
-  const cellRef = useRef(null);
-  useEffect(() => {
-    if (!registerCell || item.isSkeleton || !item.id) return undefined;
-    registerCell(item.id, cellRef);
-    return () => registerCell(item.id, null);
-  }, [registerCell, item.id, item.isSkeleton]);
-  // UNIFIED CELL: a slot renders the SAME component before and after its data
-  // arrives — no early-return into a separate skeleton component. The old
-  // early return also sat ABOVE the hooks (conditional hooks!), which is the
-  // only reason the lists needed getItemType pool-splitting; with one
-  // unconditional shape, one recycle pool serves everything and a resolving
-  // slot is just a re-render whose image fades in over the resting tile.
-  const isSkeleton = !!item.isSkeleton;
-  const isVideo = !isSkeleton && item.type === 'video';
-  const [duration, setDuration] = useState(item.duration);
-  const [hasFailed, setHasFailed] = useState(false);
-  const [localTags, setLocalTags] = useState(item.tags || []);
-
-  // ── State reset on FlashList recycle ─────────────────────────
-  // FlashList recycles this component when a cell scrolls off-screen
-  // and a new item takes its place. `useState(initial)` initializers
-  // only run on the FIRST mount, so without this reset the recycled
-  // cell carries the previous item's state (stale hasFailed /
-  // duration / tags) into the new render. That's why the OLD
-  // image stays visible at full opacity for a beat after scroll, then
-  // crossfades to the new one — exactly the "supersede" symptom we
-  // were chasing.
-  //
-  // Pattern: track the most recent item id in a ref; if it changes,
-  // call all the relevant setters during render. React queues a
-  // single re-render with the new initial values — no useEffect lag,
-  // no flash of stale state.
-  const prevItemIdRef = useRef(item.id);
-  const prevTagsRef = useRef(item.tags);
-  if (prevItemIdRef.current !== item.id) {
-    prevItemIdRef.current = item.id;
-    prevTagsRef.current = item.tags;
-    setHasFailed(false);
-    setDuration(item.duration);
-    setLocalTags(item.tags || []);
-  } else if (prevTagsRef.current !== item.tags) {
-    // SAME cell, tags changed in place — e.g. a bulk-tag assignment updated THIS
-    // item (same id, new tags JSON). Without re-syncing here, localTags stays at
-    // the pre-assignment value, so the self-heal below still treats the item as
-    // "untagged" and can overwrite the freshly-assigned tags with the file's
-    // EXIF keywords (the "my tags don't stick / silently revert" bug).
-    prevTagsRef.current = item.tags;
-    setLocalTags(item.tags || []);
-  }
-  
-  
-  // Self-healing: Fetch missing duration independently without parent re-render
-  useEffect(() => {
-    let isMounted = true;
-    
-    // Trigger if it's a video, has no duration, has ANY valid identifier,
-    // and hasn't already been asked about this session (recycled cells re-run
-    // this effect constantly — the guard caps it at one request per id).
-    if (isVideo && !duration && (item.filename || item.id) && !durationHealAttempted.has(item.id)) {
-      durationHealAttempted.add(item.id);
-      const fetchMissingInfo = async () => {
-        try {
-          // Send filename if it exists, otherwise rely on the ID
-          const fileNameParam = item.filename ? `&filename=${encodeURIComponent(item.filename)}` : '';
-          const idParam = item.id ? `&id=${item.id}` : '';
-          
-          const url = `${getBaseUrl()}/media/duration?tab=${activeTab}${fileNameParam}${idParam}`;
-          
-          const res = await fetch(url);
-          const data = await res.json();
-          if (data.success && data.duration && isMounted) {
-            setDuration(data.duration);
-          }
-        } catch (err) {
-          // Duration fetch failed silently
-        }
-      };
-      fetchMissingInfo();
-    }
-    
-    return () => { isMounted = false; };
-  }, [isVideo, duration, item, activeTab, getBaseUrl]);
-
-  // Self-Healing Tag Check - lazy background sync for missing tags
-  useEffect(() => {
-    let isMounted = true;
-    
-    // Only for uploads tab, with missing tags, and has filename
-    const hasMissingTags = !localTags || (Array.isArray(localTags) && localTags.length === 0) || localTags === '[]';
-    
-    if (activeTab === 'uploads' && hasMissingTags && item.filename && !tagHealAttempted.has(item.id)) {
-      const healTags = async () => {
-        // Claim at fire time (not arm time) so a timer cancelled by recycle
-        // doesn't burn the id's single attempt.
-        if (tagHealAttempted.has(item.id)) return;
-        if (tagHealAttempted.size > 5000) tagHealAttempted.clear(); // bound this process-lifetime guard set
-        tagHealAttempted.add(item.id);
-        try {
-          const url = `${getBaseUrl()}/media/tags/sync?id=${item.id}&filename=${encodeURIComponent(item.filename)}`;
-          const res = await fetch(url);
-          const data = await res.json();
-          
-          if (data.success && data.tags?.length > 0 && isMounted) {
-            setLocalTags(data.tags);
-          }
-        } catch (err) {
-          // Silent fail - this is a lazy background check
-          // Tag sync failed silently
-        }
-      };
-      
-      // Lazy delay - let grid settle before checking
-      const timer = setTimeout(healTags, 1000);
-      return () => { isMounted = false; clearTimeout(timer); };
-    }
-    
-    return () => { isMounted = false; };
-  }, [item.id, item.filename, localTags, activeTab, getBaseUrl]);
-  
-  // ONE thumbnail per cell (sm ≈ 200px WebP), loaded in place. We removed the
-  // separate hi-res (lg) overlay tier: it mounted on an idle timer and, under
-  // FlashList recycling, would fade an absolutely-positioned image over
-  // whichever item the recycled cell currently held — a random, offset overlay
-  // landing on the wrong index. At this grid's cell size (~⅓ screen width) the
-  // 200px sm is already retina-dense, so lg cost bandwidth + glitches for no
-  // visible gain. Falls back to the raw/local url when an item has no generated
-  // thumbnail (local device assets).
-  const smUrl = isSkeleton ? null : getFullUrl(item.thumbnailUrl || item.url);
-
-  // Quiet static base — the resting tile IS the placeholder (Google Photos
-  // style): no shimmer, no pulsing overlay, no extra animated views. Images
-  // fade in over it; unresolved slots simply stay quiet.
-  const cellBase = theme.mode === 'dark' ? 'rgba(255,255,255,0.045)' : 'rgba(0,0,0,0.04)';
-
-  return (
-    <TouchableOpacity
-      ref={cellRef}
-      disabled={isSkeleton}
-      // Stable hook for the batch-share E2E flow (.maestro/batch-share.yaml).
-      testID={isSkeleton ? undefined : `gallery-cell-${gridIndex}`}
-      style={[
-        styles.thumbnailContainer,
-        // Dynamic pinch-column size; falls back to the stylesheet's 3-col size.
-        cellSize != null && { width: cellSize, height: cellSize },
-        { backgroundColor: cellBase },
-        isSelectMode && isSelected && { opacity: 0.8 },
-      ]}
-      onPress={(e) => {
-        if (isSelectMode) { onToggleSelect(item.id, gridIndex); return; }
-        // The viewer grows out of THIS tile: measure the cell's window rect
-        // (a bounding box — the mirrored grid transform leaves it intact) and
-        // hand over centre + size. Falls back to the bare tap point if the
-        // measurement fails, which still anchors the pop here.
-        const tap = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
-        const node = cellRef.current;
-        if (node && typeof node.measureInWindow === 'function') {
-          node.measureInWindow((x, y, w, h) => {
-            openViewer(item, w > 0 && h > 0 ? { x: x + w / 2, y: y + h / 2, width: w, height: h } : tap);
-          });
-        } else {
-          openViewer(item, tap);
-        }
-      }}
-      onPressIn={(e) => onTouchDown?.(gridIndex, e.nativeEvent.pageX, e.nativeEvent.pageY)}
-      onLongPress={() => !isSelectMode && handleDelete(item.id)}
-      activeOpacity={0.8}
-    >
-      {/* Selection Checkmark Overlay */}
-      {isSelectMode && !isSkeleton && (
-        <View style={{
-          position: 'absolute', bottom: 6, right: 6, width: 22, height: 22, borderRadius: 11,
-          backgroundColor: isSelected ? theme.colors.primary : 'rgba(0,0,0,0.3)',
-          borderWidth: 1.5, borderColor: isSelected ? theme.colors.primary : '#fff',
-          justifyContent: 'center', alignItems: 'center', zIndex: 10
-        }}>
-          {isSelected && <Icon name="check" size={14} color={theme.colors.background} />}
-        </View>
-      )}
-      
-      {hasFailed ? (
-        // Fallback for failed images
-        <View style={[styles.thumbnail, styles.failedThumbnail]}>
-          <Icon 
-            name={isVideo ? 'video-off' : 'image-off'} 
-            size={32} 
-            color="#888" 
-          />
-          <Text style={styles.failedText}>
-            {isVideo ? 'Video' : 'Image'}
-          </Text>
-        </View>
-      ) : !isSkeleton && (
-        /* The single thumbnail. expo-image paints the blurhash placeholder
-           instantly (zero network) and cross-fades to the loaded image over
-           `transition` ms — blur-up, in place, over the quiet tile.
-           recyclingKey makes a recycled cell drop the old texture so the
-           fade is always placeholder→image, never stale→fresh. 120ms keeps
-           the reveal uniform and snappy across a whole landing page. */
-        <Image
-          source={{ uri: smUrl }}
-          style={styles.thumbnail}
-          contentFit="cover"
-          recyclingKey={item.id}
-          transition={120}
-          cachePolicy="memory-disk"
-          placeholder={item.blurhash ? { blurhash: item.blurhash } : null}
-          placeholderContentFit="cover"
-          onError={() => setHasFailed(true)}
-        />
-      )}
-      {/* Centermost video auto-plays a muted, looping preview over its poster
-          thumbnail once the grid settles (one decoder at a time). */}
-      {isActiveVideo && isVideo && !isSkeleton && !hasFailed && smUrl && (
-        <GridVideoPreview uri={getFullUrl(item.rawUrl || item.url)} />
-      )}
-      {item.size && item.size > 100 * 1024 * 1024 && (
-        <View style={styles.largeFileBadge}>
-          <Icon name="alert-circle-outline" size={10} color="#fff" />
-          <Text style={styles.largeFileText}>{(item.size / (1024 * 1024)).toFixed(0)}MB</Text>
-        </View>
-      )}
-      {isVideo && (
-        <View style={styles.durationBadge}>
-          {duration ? (
-            <Text style={styles.durationText}>{formatDuration(duration)}</Text>
-          ) : (
-            <Icon name="play" size={12} color="#fff" />
-          )}
-        </View>
-      )}
-      {item.type === 'document' && (
-        <View style={styles.documentOverlay}>
-          <Icon name="file-document" size={32} color="#888" />
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-});
 
 const createStyles = (theme) =>
   StyleSheet.create({

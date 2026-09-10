@@ -94,6 +94,8 @@ export function useSheetDetents({ collapsedOffset, onClose, onDetent, visible = 
 
   const expand = useCallback(() => { expandedRef.current = true; onDetentRef.current?.('expanded'); settle(0); }, [settle]);
   const collapse = useCallback(() => { expandedRef.current = false; onDetentRef.current?.('collapsed'); settle(collapsedRef.current); }, [settle]);
+  /** A tap on the header: the other detent. */
+  const toggle = useCallback(() => { if (expandedRef.current) collapse(); else expand(); }, [expand, collapse]);
   const close = useCallback(() => {
     Animated.timing(offsetY, { toValue: SCREEN_H, duration: 200, useNativeDriver: true }).start(({ finished }) => {
       if (finished) onCloseRef.current?.();
@@ -127,6 +129,34 @@ export function useSheetDetents({ collapsedOffset, onClose, onDetent, visible = 
     }),
   ).current;
 
+  // The HEADER (handle + title row) is always a drag surface, whatever the
+  // inner list's scroll position and whichever detent the card sits at: a
+  // downward pull there closes, an upward pull expands. Claimed on MOVE (not
+  // start) so the Done button and a header tap still get their press.
+  const headerResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_e, g) =>
+        Math.abs(g.dy) > DRAG_SLOP && Math.abs(g.dy) > Math.abs(g.dx) * 1.2,
+      onPanResponderGrant: () => { startRef.current = currentRef.current; },
+      onPanResponderMove: (_e, g) => {
+        const raw = startRef.current + g.dy;
+        offsetY.setValue(raw < 0 ? raw * OVERSHOOT : raw);
+      },
+      onPanResponderRelease: (_e, g) => {
+        const offset = Math.max(0, startRef.current + g.dy);
+        const verdict = decideDetent({ offset, vy: g.vy, collapsedOffset: collapsedRef.current });
+        if (verdict === 'close') close();
+        else if (verdict === 'expand') { expandedRef.current = true; onDetentRef.current?.('expanded'); settle(0, g.vy); }
+        else { expandedRef.current = false; onDetentRef.current?.('collapsed'); settle(collapsedRef.current, g.vy); }
+      },
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderTerminate: () => {
+        settle(expandedRef.current ? 0 : collapsedRef.current);
+      },
+    }),
+  ).current;
+
   const helpers = useMemo(() => {
     const scrollPropsFor = (key = 'body') => ({
       scrollEventThrottle: 16,
@@ -146,9 +176,11 @@ export function useSheetDetents({ collapsedOffset, onClose, onDetent, visible = 
   return {
     offsetY,
     panHandlers: responder.panHandlers,
+    headerPanHandlers: headerResponder.panHandlers,
     sheetStyle: { transform: [{ translateY: offsetY }] },
     expand,
     collapse,
+    toggle,
     close,
     expandedRef,
     ...helpers,
