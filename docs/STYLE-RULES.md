@@ -53,6 +53,10 @@ repo skill (loaded before any UI work) and by review.
   as usual, never a `fontFamily` (an explicit family is left alone: icon glyphs, monospace consoles).
   Artifakt Element is the reference; Figtree is the licensed stand-in. Prefer 400–600; 700 only for figures
   and one title per screen.
+  The install swaps the GETTERS on react-native's index object; never assign a Metro module's `default`
+  (it is a read-only getter in the release bundle — a strict-mode throw at launch, which expo-updates
+  answers by falling back to the factory bundle). Anything that runs at module load in App.js must be
+  wrapped so it cannot throw.
 
 ## 2. Text never overflows its container
 
